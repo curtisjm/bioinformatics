@@ -1,0 +1,116 @@
+import ray
+import os
+import pandas as pd
+import numpy as np
+
+BED_FILE = "./real-bed-files/D23_Col0_all_CpG.bed"
+OUT_DIR = "./sample-bed-files"
+DEPTH = 25
+NUM_SAMPLES = 1
+#TODO: change this to standard deviation
+READ_VARIATION = 0.15
+NUM_DMRS = 1000
+MIN_REGION_SIZE = 20
+MAX_REGION_SIZE = 3000
+PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
+CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
+
+# Using a given proportion of methylation, simulate reads of each cytosine and
+# mutating the unmethylateted counts, methylated counts, and proportion of methylation
+# in the original data frame
+def simulate_reads(start: int, end: int, original_pm: float) -> None:
+    np.random.seed()
+    uc_count = 0
+    mc_count = 0
+
+    # Randomize the number of reads for each cytosine by adding a random number between
+    # -READ_VARIATION * DEPTH and READ_VARIATION * DEPTH to the set depth
+    num_reads = int(DEPTH + DEPTH * READ_VARIATION * (2 * np.random.rand() - 1))
+
+    # Perform a weighted coin flip to determine if the cytosine is read as methylated or not by
+    # generating a random number between 0 and 1 and checking if it is less than the true proportion of methylation
+    #TODO: change this to normal distribution and find standard deviation
+    random_values = 100 * np.random.rand(num_reads)
+    mc_count = np.sum(random_values < prop)
+    uc_count = num_reads - mc_count
+
+    sim_prop = 100 * mc_count / (mc_count + uc_count)
+    
+    return (uc_count, mc_count, sim_prop)
+    
+# For regions that are not DMRs, simulate the variation in reads
+def simulate_read_variation() -> None:
+    return
+
+# Divide the bed files into different regions 
+def define_regions() -> pd.DataFrame:
+    # pm stands for percent methylation
+    regions_df = pd.DataFrame(columns=["start", "end", "original_pm", "new_pm", "is_dmr"])
+    current_start = 0
+    num_rows = bed_data.shape[0]
+
+    # Calculate the probability of each region being a DMR
+    estimated_num_regions = num_rows / ((MAX_REGION_SIZE - MIN_REGION_SIZE) / 2)
+    chance_of_dmr = NUM_DMRS / estimated_num_regions
+
+    while current_start < num_rows - 1:
+        region_size = np.random.randint(MIN_REGION_SIZE, MAX_REGION_SIZE)
+        current_end = current_start + region_size
+
+        # Make sure the region does not span multiple chromosomes
+        while bed_data.at[current_start, "chr"] != bed_data.at[current_end, "chr"]:
+            current_end -= 1
+        # Make sure the region doesn't go beyond length of bed file
+        if current_end >= bed_data.shape[0]:
+            current_end = bed_data.shape[0] - 1
+        
+        # Calculate average percent methylation for the region
+        region = bed_data.iloc[current_start:current_end]
+        pm = region["prop"].mean()
+
+        # Determine if the region is going to be made a DMR
+        is_dmr = int(np.random.rand() < chance_of_dmr)
+
+        regions_df = regions_df.append({"start": current_start, "end": current_end, "original_pm": pm, "new_pm": 0, "is_dmr": is_dmr}, ignore_index=True)
+        current_start = current_end
+    return regions_df
+
+#TODO: make this have randomness in where methlyation is changed
+def produce_dmr_increase_all(start: int, end: int, original_pm: float) -> None:
+    #TODO: should this be normal?
+    percent_diff = np.random.uniform(PERCENT_DIFF_TO_BE_CALLED_AS_DMR, 1)
+    if np.random.rand() < CHANCE_OF_INCREASE_IN_METHYLATION:
+        new_pm = original_pm + percent_diff
+    else:
+        new_pm = original_pm - percent_diff
+
+    bed_data.loc[start:end, "prop"] = bed_data.loc[start:end, "prop"] + bed_data.loc[start:end, "prop"].multiply(new_pm)
+
+def produce_dmr_iter_rand(start: int, end: int, original_pm: float, new_pm: float) -> None:
+    return
+
+@ray.remote
+def modification_handler(region: pd.DataFrame) -> None:
+    if region["is_dmr"]:
+        produce_dmr_increase_all(region["start"], region["end"], region["original_pm"])
+    else:
+        simulate_reads(region)
+
+# Initialize ray to manage parallel tasks
+ray.init()
+
+# Load data from bed file into a pandas dataframe
+col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
+bed_data = pd.read_csv(BED_FILE, sep='\t', names=col_labels, header=None)
+
+regions = define_regions()
+futures = [modification_handler.remote(region) for region in regions]
+ray.get(futures)
+
+#TODO: set new_pm here?
+#TODO: use uniform or normal distribution of percent diff?
+#TODO: should is_dmr be set after this step to allow for 0 - 100 percent diff?
+
+# Output the simulated data to a new bed file
+out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
+bed_data.to_csv(os.path.join(out_file), sep='\t', index=False, header=False)
