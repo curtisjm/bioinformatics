@@ -3,8 +3,8 @@ import os
 import pandas as pd
 import numpy as np
 
-BED_FILE = "./real-bed-files/D23_Col0_all_CpG.bed"
-OUT_DIR = "./sample-bed-files"
+BED_FILE = "~/Documents/bioinformatics/data-simulation/real-data/curtis_testing.bed"
+OUT_DIR = "~/Documents/bioinformatics/data-simulation/simulated-data"
 DEPTH = 25
 NUM_SAMPLES = 1
 #TODO: change this to standard deviation
@@ -19,27 +19,33 @@ CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 # Using a given proportion of methylation, simulate reads of each cytosine and
 # mutating the unmethylateted counts, methylated counts, and proportion of methylation
 # in the original data frame
-def simulate_reads(start: int, end: int, original_pm: float) -> float:
+def simulate_reads(prop: float) -> tuple[int, int, float]:
+    np.random.seed()
+    uc_count = 0
+    mc_count = 0
+
+    # Randomize the number of reads for each cytosine by adding a random number between
+    # -READ_VARIATION * DEPTH and READ_VARIATION * DEPTH to the set depth
+    num_reads = int(DEPTH + DEPTH * READ_VARIATION * (2 * np.random.rand() - 1))
+
+    # Perform a weighted coin flip to determine if the cytosine is read as methylated or not by
+    # generating a random number between 0 and 1 and checking if it is less than the true proportion of methylation
+    #TODO: change this to normal distribution and find standard deviation
+    random_values = 100 * np.random.rand(num_reads)
+    mc_count = np.sum(random_values < prop)
+    uc_count = num_reads - mc_count
+
+    sim_prop = 100 * mc_count / (mc_count + uc_count)
+
+    return (uc_count, mc_count, sim_prop)
+    
+    
+# For regions that are not DMRs, simulate the variation in reads
+def simulate_reads_for_region(start: int, end: int) -> float:
     new_pm = 0
 
     for row in range(start, end):
-        np.random.seed()
-        uc_count = 0
-        mc_count = 0
-
-        # Randomize the number of reads for each cytosine by adding a random number between
-        # -READ_VARIATION * DEPTH and READ_VARIATION * DEPTH to the set depth
-        num_reads = int(DEPTH + DEPTH * READ_VARIATION * (2 * np.random.rand() - 1))
-
-        # Perform a weighted coin flip to determine if the cytosine is read as methylated or not by
-        # generating a random number between 0 and 1 and checking if it is less than the true proportion of methylation
-        #TODO: change this to normal distribution and find standard deviation
-        random_values = 100 * np.random.rand(num_reads)
-
-        mc_count = np.sum(random_values < original_pm)
-        uc_count = num_reads - mc_count
-        sim_prop = 100 * mc_count / (mc_count + uc_count)
-
+        uc_count, mc_count, sim_prop = simulate_reads(bed_data.at[row, "prop"])
         bed_data.at[row, "uc"] = uc_count
         bed_data.at[row, "mc"] = mc_count
         bed_data.at[row, "prop"] = sim_prop
@@ -47,11 +53,6 @@ def simulate_reads(start: int, end: int, original_pm: float) -> float:
         new_pm += sim_prop
 
     return new_pm / (end - start)
-    
-    
-# For regions that are not DMRs, simulate the variation in reads
-def simulate_read_variation() -> None:
-    return
 
 # Divide the bed files into different regions 
 def define_regions() -> pd.DataFrame:
@@ -105,7 +106,7 @@ def modification_handler(region: pd.DataFrame) -> None:
     if region["is_dmr"]:
         produce_dmr_increase_all(region["start"], region["end"], region["original_pm"])
     else:
-        simulate_reads(region)
+        simulate_reads_for_region(region["start"], region["end"])
 
 # Initialize ray to manage parallel tasks
 ray.init()
@@ -123,5 +124,6 @@ ray.get(futures)
 #TODO: should is_dmr be set after this step to allow for 0 - 100 percent diff?
 
 # Output the simulated data to a new bed file
-out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
+# out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
+out_file = os.path.join(OUT_DIR, "false_pos_test.bed")
 bed_data.to_csv(os.path.join(out_file), sep='\t', index=False, header=False)
