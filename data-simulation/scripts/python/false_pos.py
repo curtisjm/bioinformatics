@@ -18,25 +18,35 @@ CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 # Using a given proportion of methylation, simulate reads of each cytosine and
 # mutating the unmethylateted counts, methylated counts, and proportion of methylation
 # in the original data frame
-def simulate_reads(start: int, end: int, original_pm: float) -> None:
-    np.random.seed()
-    uc_count = 0
-    mc_count = 0
+def simulate_reads(start: int, end: int, original_pm: float) -> float:
+    new_pm = 0
 
-    # Randomize the number of reads for each cytosine by adding a random number between
-    # -READ_VARIATION * DEPTH and READ_VARIATION * DEPTH to the set depth
-    num_reads = int(DEPTH + DEPTH * READ_VARIATION * (2 * np.random.rand() - 1))
+    for row in range(start, end):
+        np.random.seed()
+        uc_count = 0
+        mc_count = 0
 
-    # Perform a weighted coin flip to determine if the cytosine is read as methylated or not by
-    # generating a random number between 0 and 1 and checking if it is less than the true proportion of methylation
-    #TODO: change this to normal distribution and find standard deviation
-    random_values = 100 * np.random.rand(num_reads)
-    mc_count = np.sum(random_values < prop)
-    uc_count = num_reads - mc_count
+        # Randomize the number of reads for each cytosine by adding a random number between
+        # -READ_VARIATION * DEPTH and READ_VARIATION * DEPTH to the set depth
+        num_reads = int(DEPTH + DEPTH * READ_VARIATION * (2 * np.random.rand() - 1))
 
-    sim_prop = 100 * mc_count / (mc_count + uc_count)
+        # Perform a weighted coin flip to determine if the cytosine is read as methylated or not by
+        # generating a random number between 0 and 1 and checking if it is less than the true proportion of methylation
+        #TODO: change this to normal distribution and find standard deviation
+        random_values = 100 * np.random.rand(num_reads)
+
+        mc_count = np.sum(random_values < original_pm)
+        uc_count = num_reads - mc_count
+        sim_prop = 100 * mc_count / (mc_count + uc_count)
+
+        bed_data.at[row, "uc"] = uc_count
+        bed_data.at[row, "mc"] = mc_count
+        bed_data.at[row, "prop"] = sim_prop
+
+        new_pm += sim_prop
+
+    return new_pm / (end - start)
     
-    return (uc_count, mc_count, sim_prop)
     
 # For regions that are not DMRs, simulate the variation in reads
 def simulate_read_variation() -> None:
