@@ -8,6 +8,7 @@ OUT_DIR = "./sample-bed-files"
 DEPTH = 25
 NUM_SAMPLES = 1
 #TODO: change this to standard deviation
+STD_DEV = 0.15
 READ_VARIATION = 0.15
 NUM_DMRS = 1000
 MIN_REGION_SIZE = 20
