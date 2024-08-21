@@ -74,12 +74,13 @@ def define_regions() -> pd.DataFrame:
         region_size = np.random.randint(MIN_REGION_SIZE, MAX_REGION_SIZE)
         current_end = current_start + region_size
 
-        # Make sure the region does not span multiple chromosomes
-        while bed_data.at[current_start, "chr"] != bed_data.at[current_end, "chr"]:
-            current_end -= 1
         # Make sure the region doesn't go beyond length of bed file
         if current_end >= bed_data.shape[0]:
             current_end = bed_data.shape[0] - 1
+
+        # Make sure the region does not span multiple chromosomes
+        while bed_data.at[current_start, "chr"] != bed_data.at[current_end, "chr"]:
+            current_end -= 1
         
         # Calculate average percent methylation for the region
         region = bed_data.iloc[current_start:current_end]
@@ -89,7 +90,7 @@ def define_regions() -> pd.DataFrame:
         is_dmr = int(np.random.rand() < chance_of_dmr)
 
         new_col = pd.DataFrame([[current_start, current_end, pm, 0, is_dmr]], columns=cols)
-        regions_df = pd.concat([regions_df, new_col]) if not regions_df.empty else new_col
+        regions_df = pd.concat([regions_df, new_col], ignore_index=True) if not regions_df.empty else new_col
         current_start = current_end
     return regions_df
 
@@ -103,17 +104,18 @@ def produce_dmr_increase_all(start: int, end: int, original_pm: float) -> float:
         new_pm = original_pm - percent_diff
 
     bed_data.loc[start:end, "prop"] = bed_data.loc[start:end, "prop"] + bed_data.loc[start:end, "prop"].multiply(new_pm)
+    #TODO: modify cytosine counts
     return new_pm
 
 def produce_dmr_iter_rand(start: int, end: int, original_pm: float, new_pm: float) -> None:
     return
 
 @ray.remote
-def modification_handler(region: pd.DataFrame) -> None:
-    if region["is_dmr"]:
-        region["new_pm"] = produce_dmr_increase_all(region["start"], region["end"], region["original_pm"])
+def modification_handler(row: int) -> None:
+    if regions.at[row, "is_dmr"]:
+        regions.at[row, "new_pm"] = produce_dmr_increase_all(regions.at[row, "start"], regions.at[row, "end"], regions.at[row, "original_pm"])
     else:
-       region["new_pm"] = simulate_reads_for_region(region["start"], region["end"])
+       regions.at[row, "new_pm"] = simulate_reads_for_region(regions.at[row, "start"], regions.at[row, "end"])
         
 
 # Initialize ray to manage parallel tasks
@@ -124,7 +126,7 @@ col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
 bed_data = pd.read_csv(BED_FILE, sep='\t', names=col_labels, header=None)
 
 regions = define_regions()
-futures = [modification_handler.remote(region) for region in regions]
+futures = [modification_handler.remote(i) for i in range(regions.shape[0])]
 ray.get(futures)
 
 #TODO: set new_pm here?
@@ -133,8 +135,8 @@ ray.get(futures)
 
 # Output the simulated data to a new bed file
 # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
-output_data_filename = os.path.join(OUT_DIR, "false_pos_test.bed")
+output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
 bed_data.to_csv(output_data_filename, sep='\t', index=False, header=False)
 
-output_region_filename = os.path.join(OUT_DIR, "false_pos_test_regions.tsv")
-bed_data.to_csv(output_data_filename, sep='\t', index=False, header=True)
+output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
+regions.to_csv(output_region_filename, sep='\t', index=False, header=True)
