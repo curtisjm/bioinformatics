@@ -4,15 +4,19 @@ import pandas as pd
 import numpy as np
 
 BED_FILE = "~/Documents/bioinformatics/data-simulation/real-data/curtis_testing.bed"
-OUT_DIR = "~/Documents/bioinformatics/data-simulation/simulated-data"
+OUT_DIR_DATA = "~/Documents/bioinformatics/data-simulation/simulated-data"
+OUT_DIR_REGIONS = "~/Documents/bioinformatics/data-simulation/simulated-data"
 DEPTH = 25
 NUM_SAMPLES = 1
 #TODO: change this to standard deviation
 STD_DEV = 0.15
 READ_VARIATION = 0.15
-NUM_DMRS = 1000
-MIN_REGION_SIZE = 20
-MAX_REGION_SIZE = 3000
+# NUM_DMRS = 1000
+# MIN_REGION_SIZE = 20
+# MAX_REGION_SIZE = 3000
+NUM_DMRS = 10
+MIN_REGION_SIZE = 2
+MAX_REGION_SIZE = 15
 PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
 CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 
@@ -57,7 +61,8 @@ def simulate_reads_for_region(start: int, end: int) -> float:
 # Divide the bed files into different regions 
 def define_regions() -> pd.DataFrame:
     # pm stands for percent methylation
-    regions_df = pd.DataFrame(columns=["start", "end", "original_pm", "new_pm", "is_dmr"])
+    cols = ["start", "end", "original_pm", "new_pm", "is_dmr"]
+    regions_df = pd.DataFrame(columns=cols)
     current_start = 0
     num_rows = bed_data.shape[0]
 
@@ -83,12 +88,13 @@ def define_regions() -> pd.DataFrame:
         # Determine if the region is going to be made a DMR
         is_dmr = int(np.random.rand() < chance_of_dmr)
 
-        regions_df = regions_df.append({"start": current_start, "end": current_end, "original_pm": pm, "new_pm": 0, "is_dmr": is_dmr}, ignore_index=True)
+        new_col = pd.DataFrame([[current_start, current_end, pm, 0, is_dmr]], columns=cols)
+        regions_df = pd.concat([regions_df, new_col]) if not regions_df.empty else new_col
         current_start = current_end
     return regions_df
 
 #TODO: make this have randomness in where methlyation is changed
-def produce_dmr_increase_all(start: int, end: int, original_pm: float) -> None:
+def produce_dmr_increase_all(start: int, end: int, original_pm: float) -> float:
     #TODO: should this be normal?
     percent_diff = np.random.uniform(PERCENT_DIFF_TO_BE_CALLED_AS_DMR, 1)
     if np.random.rand() < CHANCE_OF_INCREASE_IN_METHYLATION:
@@ -97,6 +103,7 @@ def produce_dmr_increase_all(start: int, end: int, original_pm: float) -> None:
         new_pm = original_pm - percent_diff
 
     bed_data.loc[start:end, "prop"] = bed_data.loc[start:end, "prop"] + bed_data.loc[start:end, "prop"].multiply(new_pm)
+    return new_pm
 
 def produce_dmr_iter_rand(start: int, end: int, original_pm: float, new_pm: float) -> None:
     return
@@ -104,9 +111,10 @@ def produce_dmr_iter_rand(start: int, end: int, original_pm: float, new_pm: floa
 @ray.remote
 def modification_handler(region: pd.DataFrame) -> None:
     if region["is_dmr"]:
-        produce_dmr_increase_all(region["start"], region["end"], region["original_pm"])
+        region["new_pm"] = produce_dmr_increase_all(region["start"], region["end"], region["original_pm"])
     else:
-        simulate_reads_for_region(region["start"], region["end"])
+       region["new_pm"] = simulate_reads_for_region(region["start"], region["end"])
+        
 
 # Initialize ray to manage parallel tasks
 ray.init()
@@ -125,5 +133,8 @@ ray.get(futures)
 
 # Output the simulated data to a new bed file
 # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
-out_file = os.path.join(OUT_DIR, "false_pos_test.bed")
-bed_data.to_csv(os.path.join(out_file), sep='\t', index=False, header=False)
+output_data_filename = os.path.join(OUT_DIR, "false_pos_test.bed")
+bed_data.to_csv(output_data_filename, sep='\t', index=False, header=False)
+
+output_region_filename = os.path.join(OUT_DIR, "false_pos_test_regions.tsv")
+bed_data.to_csv(output_data_filename, sep='\t', index=False, header=True)

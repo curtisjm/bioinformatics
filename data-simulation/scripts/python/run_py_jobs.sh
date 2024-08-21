@@ -1,12 +1,12 @@
 #!/bin/bash
 
-#SBATCH --job-name=full_sample_gen_test
+#SBATCH --job-name=false_positive_test
 
 #SBATCH --account=fc_williamslab
 
 #SBATCH --partition=savio3
 
-#SBATCH --time=07:00:00
+#SBATCH --time=00:30:00
 
 module load python
-python ray_generate_samples.py
+python false_positive.py
