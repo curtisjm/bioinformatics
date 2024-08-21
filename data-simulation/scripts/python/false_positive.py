@@ -2,6 +2,14 @@ import ray
 import os
 import pandas as pd
 import numpy as np
+'''
+Notes:
+- TODO: Write description of what the script does
+- Does this script need batching in ray? https://docs.ray.io/en/latest/ray-core/patterns/too-fine-grained-tasks.html
+- Is the large size of the object in the global state actor a problem? https://docs.ray.io/en/latest/ray-core/patterns/global-variables.html
+- Should the rest of the functions be moved into their own actor?
+    - Or into the global state actor?
+'''
 
 BED_FILE = "~/Documents/bioinformatics/data-simulation/real-data/curtis_testing.bed"
 OUT_DIR_DATA = "~/Documents/bioinformatics/data-simulation/simulated-data"
@@ -75,18 +83,18 @@ def produce_dmr_iter_rand(start: int, end: int, original_pm: float, new_pm: floa
     return
 
 @ray.remote
-def modification_handler(row: int) -> None:
-    start, end, original_pm = regions.at[row, "start"], regions.at[row, "end"], regions.at[row, "original_pm"]
-    if regions.at[row, "is_dmr"]:
+def modification_handler(global_state: object, region_num: int) -> None:
+    start, end, original_pm = global_state.get_regions_entry.remote(region_num, "start"), global_state.get_regions_entry.remote(region_num, "end"), global_state.get_regions_entry.remote(region_num, "original_pm")
+    if global_state.get_regions_entry.remote(region_num, "is_dmr"):
         print(f"Producing DMR for region {start} to {end} with original pm {original_pm}")
         new_pm = produce_dmr_increase_all(start, end, original_pm)
         print(f"\t New pm is {new_pm}")
-        regions.at[row, "new_pm"]
+        global_state.update_regions_entry.remote(region_num, "new_pm", new_pm)
     else:
         print(f"Simulating reads for region {start} to {end} with original pm {original_pm}")
         new_pm = simulate_reads_for_region(start, end)
         print(f"\t New pm is {new_pm}")
-        regions.at[row, "new_pm"] = new_pm
+        global_state.update_regions_entry.remote(region_num, "new_pm", new_pm)
 
 @ray.remote
 class GlobalStateActor():
@@ -97,6 +105,7 @@ class GlobalStateActor():
         self.bed_data = pd.read_csv(BED_FILE, sep='\t', names=self.col_labels, header=None)
 
         self.regions = self.define_regions()
+        self.num_regions = self.regions.shape[0]
 
     # Divide the bed files into different regions 
     def define_regions(self) -> pd.DataFrame:
@@ -138,26 +147,51 @@ class GlobalStateActor():
     def get_num_dmrs(self) -> int:
         return self.num_dmrs
 
+    def get_num_regions(self) -> int:
+        return self.num_regions
+
     def get_bed_data(self) -> pd.DataFrame:
         return self.bed_data
     
     def get_regions(self) -> pd.DataFrame:
         return self.regions
     
+    def get_bed_data_entry(self, row: int, col: str) -> object:
+        return self.bed_data.at[row, col]
+    
+    def get_regions_entry(self, row: int, col: str) -> object:
+        return self.regions.at[row, col]
+    
     def update_bed_date_entry(self, row: int, col: str, value) -> None:
         self.bed_data.at[row, col] = value
 
     def update_regions_entry(self, row: int, col: str, value) -> None:
         self.regions.at[row, col] = value
+
+    #TODO: check functionality of these methods
+    def update_range_of_bed_data(self, start: int, end: int, col: str, new_column_segment: pd.DataFrame) -> None:
+        self.bed_data.loc[start:end, col] = new_column_segment
     
-
-        
-
-
+    def update_range_of_regions(self, start: int, end: int, col: str, new_column_segment: pd.DataFrame) -> None:
+        self.regions.loc[start:end, col] = new_column_segment
+    
+    # def bed_data_to_to_csv(self) -> None:
+    #     # Output the simulated data to a new bed file
+    #     # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
+    #     output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
+    #     self.bed_data.to_csv(output_data_filename, sep='\t', index=False, header=False)
+    
+    # def regions_to_csv(self) -> None:
+    #     output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
+    #     self.regions.to_csv(output_region_filename, sep='\t', index=False, header=True)
+       
+       
+       
+       
 # Initialize ray to manage parallel tasks
 ray.init()
 
-global_state = GlobalStateActor.remote()
+global_state_actor = GlobalStateActor.remote()
 
 futures = [modification_handler.remote(i) for i in range(regions.shape[0])]
 ray.get(futures)
@@ -166,10 +200,16 @@ ray.get(futures)
 #TODO: use uniform or normal distribution of percent diff?
 #TODO: should is_dmr be set after this step to allow for 0 - 100 percent diff?
 
+#TODO: which version to use?
+# global_state_actor.bed_data_to_to_csv.remote()
+# global_state_actor.regions_to_csv.remote()
+# ray.get(global_state_actor.bed_data_to_to_csv.remote())
+# ray.get(global_state_actor.regions_to_csv.remote())
+
 # Output the simulated data to a new bed file
 # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
 output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
-bed_data.to_csv(output_data_filename, sep='\t', index=False, header=False)
+ray.get(global_state_actor.get_bed_data.remote()).to_csv(output_data_filename, sep='\t', index=False, header=False)
 
 output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
-regions.to_csv(output_region_filename, sep='\t', index=False, header=True)
+ray.get(global_state_actor.get_regions.remote()).to_csv(output_region_filename, sep='\t', index=False, header=True)
