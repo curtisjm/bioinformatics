@@ -14,7 +14,7 @@ READ_VARIATION = 0.15
 # NUM_DMRS = 1000
 # MIN_REGION_SIZE = 20
 # MAX_REGION_SIZE = 3000
-NUM_DMRS = 10
+ESTIMATED_NUM_DMRS = 10
 MIN_REGION_SIZE = 2
 MAX_REGION_SIZE = 15
 PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
@@ -43,7 +43,6 @@ def simulate_reads(prop: float) -> tuple[int, int, float]:
 
     return (uc_count, mc_count, sim_prop)
     
-    
 # For regions that are not DMRs, simulate the variation in reads
 def simulate_reads_for_region(start: int, end: int) -> float:
     new_pm = 0
@@ -58,45 +57,10 @@ def simulate_reads_for_region(start: int, end: int) -> float:
 
     return new_pm / (end - start)
 
-# Divide the bed files into different regions 
-def define_regions() -> pd.DataFrame:
-    # pm stands for percent methylation
-    cols = ["start", "end", "original_pm", "new_pm", "is_dmr"]
-    regions_df = pd.DataFrame(columns=cols)
-    current_start = 0
-    num_rows = bed_data.shape[0]
-
-    # Calculate the probability of each region being a DMR
-    estimated_num_regions = num_rows / ((MAX_REGION_SIZE - MIN_REGION_SIZE) / 2)
-    chance_of_dmr = NUM_DMRS / estimated_num_regions
-
-    while current_start < num_rows - 1:
-        region_size = np.random.randint(MIN_REGION_SIZE, MAX_REGION_SIZE)
-        current_end = current_start + region_size
-
-        # Make sure the region doesn't go beyond length of bed file
-        if current_end >= bed_data.shape[0]:
-            current_end = bed_data.shape[0] - 1
-
-        # Make sure the region does not span multiple chromosomes
-        while bed_data.at[current_start, "chr"] != bed_data.at[current_end, "chr"]:
-            current_end -= 1
-        
-        # Calculate average percent methylation for the region
-        region = bed_data.iloc[current_start:current_end]
-        pm = region["prop"].mean()
-
-        # Determine if the region is going to be made a DMR
-        is_dmr = int(np.random.rand() < chance_of_dmr)
-
-        new_col = pd.DataFrame([[current_start, current_end, pm, 0, is_dmr]], columns=cols)
-        regions_df = pd.concat([regions_df, new_col], ignore_index=True) if not regions_df.empty else new_col
-        current_start = current_end
-    return regions_df
-
 #TODO: make this have randomness in where methlyation is changed
 def produce_dmr_increase_all(start: int, end: int, original_pm: float) -> float:
     #TODO: should this be normal?
+    #TODO: allow for decrease in methylation
     percent_diff = np.random.uniform(PERCENT_DIFF_TO_BE_CALLED_AS_DMR, 1)
     if np.random.rand() < CHANCE_OF_INCREASE_IN_METHYLATION:
         new_pm = original_pm + percent_diff
@@ -112,20 +76,89 @@ def produce_dmr_iter_rand(start: int, end: int, original_pm: float, new_pm: floa
 
 @ray.remote
 def modification_handler(row: int) -> None:
+    start, end, original_pm = regions.at[row, "start"], regions.at[row, "end"], regions.at[row, "original_pm"]
     if regions.at[row, "is_dmr"]:
-        regions.at[row, "new_pm"] = produce_dmr_increase_all(regions.at[row, "start"], regions.at[row, "end"], regions.at[row, "original_pm"])
+        print(f"Producing DMR for region {start} to {end} with original pm {original_pm}")
+        new_pm = produce_dmr_increase_all(start, end, original_pm)
+        print(f"\t New pm is {new_pm}")
+        regions.at[row, "new_pm"]
     else:
-       regions.at[row, "new_pm"] = simulate_reads_for_region(regions.at[row, "start"], regions.at[row, "end"])
+        print(f"Simulating reads for region {start} to {end} with original pm {original_pm}")
+        new_pm = simulate_reads_for_region(start, end)
+        print(f"\t New pm is {new_pm}")
+        regions.at[row, "new_pm"] = new_pm
+
+@ray.remote
+class GlobalStateActor():
+    def __init__(self) -> None:
+        self.num_dmrs = 0
+        # Load data from bed file into a pandas dataframe
+        self.col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
+        self.bed_data = pd.read_csv(BED_FILE, sep='\t', names=self.col_labels, header=None)
+
+        self.regions = self.define_regions()
+
+    # Divide the bed files into different regions 
+    def define_regions(self) -> pd.DataFrame:
+        # pm stands for percent methylation
+        cols = ["start", "end", "original_pm", "new_pm", "is_dmr"]
+        regions_df = pd.DataFrame(columns=cols)
+        current_start = 0
+        num_rows = self.bed_data.shape[0]
+
+        # Calculate the probability of each region being a DMR
+        estimated_num_regions = num_rows / ((MAX_REGION_SIZE - MIN_REGION_SIZE) / 2)
+        chance_of_dmr = ESTIMATED_NUM_DMRS / estimated_num_regions
+
+        while current_start < num_rows - 1:
+            region_size = np.random.randint(MIN_REGION_SIZE, MAX_REGION_SIZE)
+            current_end = current_start + region_size
+
+            # Make sure the region doesn't go beyond length of bed file
+            if current_end >= self.bed_data.shape[0]:
+                current_end = self.bed_data.shape[0] - 1
+
+            # Make sure the region does not span multiple chromosomes
+            while self.bed_data.at[current_start, "chr"] != self.bed_data.at[current_end, "chr"]:
+                current_end -= 1
+
+            # Calculate average percent methylation for the region
+            region = self.bed_data.iloc[current_start:current_end]
+            pm = region["prop"].mean()
+
+            # Determine if the region is going to be made a DMR
+            is_dmr = int(np.random.rand() < chance_of_dmr)
+            self.num_dmrs += is_dmr
+
+            new_col = pd.DataFrame([[current_start, current_end, pm, 0.0, is_dmr]], columns=cols)
+            regions_df = pd.concat([regions_df, new_col], ignore_index=True) if not regions_df.empty else new_col
+            current_start = current_end
+        return regions_df
+
+    def get_num_dmrs(self) -> int:
+        return self.num_dmrs
+
+    def get_bed_data(self) -> pd.DataFrame:
+        return self.bed_data
+    
+    def get_regions(self) -> pd.DataFrame:
+        return self.regions
+    
+    def update_bed_date_entry(self, row: int, col: str, value) -> None:
+        self.bed_data.at[row, col] = value
+
+    def update_regions_entry(self, row: int, col: str, value) -> None:
+        self.regions.at[row, col] = value
+    
+
         
+
 
 # Initialize ray to manage parallel tasks
 ray.init()
 
-# Load data from bed file into a pandas dataframe
-col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
-bed_data = pd.read_csv(BED_FILE, sep='\t', names=col_labels, header=None)
+global_state = GlobalStateActor.remote()
 
-regions = define_regions()
 futures = [modification_handler.remote(i) for i in range(regions.shape[0])]
 ray.get(futures)
 
