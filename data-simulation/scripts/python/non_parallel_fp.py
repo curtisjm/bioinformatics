@@ -13,9 +13,9 @@ Notes:
 - Make each task larger to reduce overhead of starting a new one.
 '''
 
-BED_FILE = "~/Documents/bioinformatics/data-simulation/real-data/100_test.bed"
-OUT_DIR_DATA = "~/Documents/bioinformatics/data-simulation/simulated-data"
-OUT_DIR_REGIONS = "~/Documents/bioinformatics/data-simulation/simulated-data"
+BED_FILE = "../../real-data/100_test.bed"
+OUT_DIR_DATA = "../../simulated-data"
+OUT_DIR_REGIONS = "../../simulated-data"
 DEPTH = 25
 NUM_SAMPLES = 1
 #TODO: change this to standard deviation
