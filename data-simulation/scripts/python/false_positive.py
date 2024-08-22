@@ -2,13 +2,15 @@ import ray
 import os
 import pandas as pd
 import numpy as np
+
 '''
 Notes:
-- TODO: Write description of what the script does
+- TODO: Write description of what the script does.
 - Does this script need batching in ray? https://docs.ray.io/en/latest/ray-core/patterns/too-fine-grained-tasks.html
 - Is the large size of the object in the global state actor a problem? https://docs.ray.io/en/latest/ray-core/patterns/global-variables.html
 - Should the rest of the functions be moved into their own actor?
     - Or into the global state actor?
+- Make each task larger to reduce overhead of starting a new one.
 '''
 
 BED_FILE = "~/Documents/bioinformatics/data-simulation/real-data/curtis_testing.bed"
@@ -52,30 +54,31 @@ def simulate_reads(prop: float) -> tuple[int, int, float]:
     return (uc_count, mc_count, sim_prop)
     
 # For regions that are not DMRs, simulate the variation in reads
-def simulate_reads_for_region(start: int, end: int) -> float:
+def simulate_reads_for_region(global_state: object, start: int, end: int) -> float:
     new_pm = 0
 
     for row in range(start, end):
-        uc_count, mc_count, sim_prop = simulate_reads(bed_data.at[row, "prop"])
-        bed_data.at[row, "uc"] = uc_count
-        bed_data.at[row, "mc"] = mc_count
-        bed_data.at[row, "prop"] = sim_prop
+        uc_count, mc_count, sim_prop = simulate_reads(global_state.get_bed_data_entry.remote(row, "prop"))
+        global_state.update_bed_date_entry.remote(row, "uc", uc_count)
+        global_state.update_bed_date_entry.remote(row, "mc", mc_count)
+        global_state.update_bed_date_entry.remote(row, "prop", sim_prop)
 
         new_pm += sim_prop
 
     return new_pm / (end - start)
 
 #TODO: make this have randomness in where methlyation is changed
-def produce_dmr_increase_all(start: int, end: int, original_pm: float) -> float:
+def produce_dmr_increase_all(global_state: object, start: int, end: int, original_pm: float) -> float:
     #TODO: should this be normal?
     #TODO: allow for decrease in methylation
     percent_diff = np.random.uniform(PERCENT_DIFF_TO_BE_CALLED_AS_DMR, 1)
-    if np.random.rand() < CHANCE_OF_INCREASE_IN_METHYLATION:
-        new_pm = original_pm + percent_diff
-    else:
-        new_pm = original_pm - percent_diff
-
-    bed_data.loc[start:end, "prop"] = bed_data.loc[start:end, "prop"] + bed_data.loc[start:end, "prop"].multiply(new_pm)
+    # Determine if the percent difference should be positive or negative
+    if np.random.rand() > CHANCE_OF_INCREASE_IN_METHYLATION:
+        percent_diff = -percent_diff
+    new_pm = original_pm * (1 + percent_diff)
+    # bed_data.loc[start:end, "prop"] = bed_data.loc[start:end, "prop"] + bed_data.loc[start:end, "prop"].multiply(new_pm)
+    new_range_of_pm = global_state.get_range_of_bed_data.remote(start, end, "prop") * (1 + percent_diff)
+    global_state.update_range_of_bed_data.remote(start, end, "prop", new_range_of_pm)
     #TODO: modify cytosine counts
     return new_pm
 
@@ -87,12 +90,12 @@ def modification_handler(global_state: object, region_num: int) -> None:
     start, end, original_pm = global_state.get_regions_entry.remote(region_num, "start"), global_state.get_regions_entry.remote(region_num, "end"), global_state.get_regions_entry.remote(region_num, "original_pm")
     if global_state.get_regions_entry.remote(region_num, "is_dmr"):
         print(f"Producing DMR for region {start} to {end} with original pm {original_pm}")
-        new_pm = produce_dmr_increase_all(start, end, original_pm)
+        new_pm = produce_dmr_increase_all(global_state, start, end, original_pm)
         print(f"\t New pm is {new_pm}")
         global_state.update_regions_entry.remote(region_num, "new_pm", new_pm)
     else:
         print(f"Simulating reads for region {start} to {end} with original pm {original_pm}")
-        new_pm = simulate_reads_for_region(start, end)
+        new_pm = simulate_reads_for_region(global_state, start, end)
         print(f"\t New pm is {new_pm}")
         global_state.update_regions_entry.remote(region_num, "new_pm", new_pm)
 
@@ -162,6 +165,12 @@ class GlobalStateActor():
     def get_regions_entry(self, row: int, col: str) -> object:
         return self.regions.at[row, col]
     
+    def get_range_of_bed_data(self, start: int, end: int, col: str) -> pd.DataFrame:
+        return self.bed_data.loc[start:end, col]
+
+    def get_range_of_regions(self, start: int, end: int, col: str) -> pd.DataFrame:
+        return self.regions.loc[start:end, col]
+    
     def update_bed_date_entry(self, row: int, col: str, value) -> None:
         self.bed_data.at[row, col] = value
 
@@ -175,15 +184,15 @@ class GlobalStateActor():
     def update_range_of_regions(self, start: int, end: int, col: str, new_column_segment: pd.DataFrame) -> None:
         self.regions.loc[start:end, col] = new_column_segment
     
-    # def bed_data_to_to_csv(self) -> None:
-    #     # Output the simulated data to a new bed file
-    #     # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
-    #     output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
-    #     self.bed_data.to_csv(output_data_filename, sep='\t', index=False, header=False)
+    def bed_data_to_to_csv(self) -> None:
+        # Output the simulated data to a new bed file
+        # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
+        output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
+        self.bed_data.to_csv(output_data_filename, sep='\t', index=False, header=False)
     
-    # def regions_to_csv(self) -> None:
-    #     output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
-    #     self.regions.to_csv(output_region_filename, sep='\t', index=False, header=True)
+    def regions_to_csv(self) -> None:
+        output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
+        self.regions.to_csv(output_region_filename, sep='\t', index=False, header=True)
        
        
        
