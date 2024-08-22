@@ -14,8 +14,8 @@ Notes:
 '''
 
 BED_FILE = "../../real-data/100_test.bed"
-OUT_DIR_DATA = "../../simulated-data"
-OUT_DIR_REGIONS = "../../simulated-data"
+OUT_DIR_DATA = "./"
+OUT_DIR_REGIONS = "./"
 DEPTH = 25
 NUM_SAMPLES = 1
 #TODO: change this to standard deviation
