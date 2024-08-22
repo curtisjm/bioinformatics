@@ -70,7 +70,7 @@ def simulate_reads_for_region(start: int, end: int) -> float:
 def produce_dmr_increase_all(start: int, end: int, original_pm: float) -> float:
     #TODO: should this be normal?
     #TODO: allow for decrease in methylation
-    percent_diff = rng.uniform(PERCENT_DIFF_TO_BE_CALLED_AS_DMR, 1)
+    percent_diff = 100 * rng.uniform(PERCENT_DIFF_TO_BE_CALLED_AS_DMR, 1)
     # Determine if the percent difference should be positive or negative
     if rng.random() > CHANCE_OF_INCREASE_IN_METHYLATION:
         percent_diff = -percent_diff
