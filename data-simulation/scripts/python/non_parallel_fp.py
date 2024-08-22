@@ -74,7 +74,7 @@ def produce_dmr_increase_all(start: int, end: int, original_pm: float) -> float:
     # Determine if the percent difference should be positive or negative
     if rng.random() > CHANCE_OF_INCREASE_IN_METHYLATION:
         percent_diff = -percent_diff
-    new_pm = original_pm * (1 + percent_diff)
+    new_pm = original_pm + percent_diff
     bed_data.loc[start:end, "prop"] = bed_data.loc[start:end, "prop"].mul(1 + percent_diff)
     #TODO: modify cytosine counts
     return new_pm
