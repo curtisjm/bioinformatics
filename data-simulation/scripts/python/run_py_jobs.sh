@@ -9,4 +9,4 @@
 #SBATCH --time=00:30:00
 
 module load python
-python false_positive.py
+python non_parallel_fp.py
