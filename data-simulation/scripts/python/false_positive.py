@@ -77,7 +77,7 @@ def produce_dmr_increase_all(global_state: object, start: int, end: int, origina
         percent_diff = -percent_diff
     new_pm = original_pm * (1 + percent_diff)
     # bed_data.loc[start:end, "prop"] = bed_data.loc[start:end, "prop"] + bed_data.loc[start:end, "prop"].multiply(new_pm)
-    new_range_of_pm = global_state.get_range_of_bed_data.remote(start, end, "prop") * (1 + percent_diff)
+    new_range_of_pm = global_state.get_range_of_bed_data.remote(start, end, "prop").mul(1 + percent_diff)
     global_state.update_range_of_bed_data.remote(start, end, "prop", new_range_of_pm)
     #TODO: modify cytosine counts
     return new_pm
@@ -87,17 +87,17 @@ def produce_dmr_iter_rand(start: int, end: int, original_pm: float, new_pm: floa
 
 @ray.remote
 def modification_handler(global_state: object, region_num: int) -> None:
-    start, end, original_pm = global_state.get_regions_entry.remote(region_num, "start"), global_state.get_regions_entry.remote(region_num, "end"), global_state.get_regions_entry.remote(region_num, "original_pm")
+    start, end, original_pm = (global_state.get_regions_entry.remote(region_num, "start"),
+                               global_state.get_regions_entry.remote(region_num, "end"),
+                               global_state.get_regions_entry.remote(region_num, "original_pm"))
     if global_state.get_regions_entry.remote(region_num, "is_dmr"):
         print(f"Producing DMR for region {start} to {end} with original pm {original_pm}")
         new_pm = produce_dmr_increase_all(global_state, start, end, original_pm)
-        print(f"\t New pm is {new_pm}")
-        global_state.update_regions_entry.remote(region_num, "new_pm", new_pm)
     else:
         print(f"Simulating reads for region {start} to {end} with original pm {original_pm}")
         new_pm = simulate_reads_for_region(global_state, start, end)
-        print(f"\t New pm is {new_pm}")
-        global_state.update_regions_entry.remote(region_num, "new_pm", new_pm)
+    print(f"\t New pm is {new_pm}")
+    global_state.update_regions_entry.remote(region_num, "new_pm", new_pm)
 
 @ray.remote
 class GlobalStateActor():
@@ -202,7 +202,8 @@ ray.init()
 
 global_state_actor = GlobalStateActor.remote()
 
-futures = [modification_handler.remote(i) for i in range(regions.shape[0])]
+futures = [modification_handler.remote(global_state_actor, region_num)
+           for region_num in range(ray.get(global_state_actor.get_num_regions.remote()))]
 ray.get(futures)
 
 #TODO: set new_pm here?
