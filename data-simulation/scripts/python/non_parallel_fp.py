@@ -61,20 +61,19 @@ def percent_diff(original_pm: float, start: int, end: int) -> float:
     new_pm = bed_data.loc[start:end, "prop"].mean()
     return abs(new_pm - original_pm)
 
-def produce_dmr_iter_rand(start: int, end: int, original_pm: float) -> None:
+def produce_dmr_iter_rand(start: int, end: int, original_pm: float, inc_or_dec: str) -> None:
     goal_percent_diff = 100 * rng.random() * PERCENT_DIFF_TO_BE_CALLED_AS_DMR
-    print(bed_data.loc[start:end])
     # Select a random cytosine to change the methylation of and increase or decrease it's methlyation until the goal is reached
     while percent_diff(original_pm, start, end) < goal_percent_diff:
-        # print(f"Percent diff is {percent_diff(original_pm, start, end)}")
         # Select which cytosine we are modifying
         selected_cytosine = rng.integers(start, end)
+        inc_or_dec_multiplier = 1 if inc_or_dec == "+" else -1
         
         # Determine how much to change the methylation of the cytosine
         min_delta = 0
         max_delta = 100 - bed_data.at[selected_cytosine, "prop"]
         delta = rng.random() * (max_delta - min_delta) + min_delta
-        bed_data.at[selected_cytosine, "prop"] += delta
+        bed_data.at[selected_cytosine, "prop"] += delta * inc_or_dec_multiplier
 
         # Use the new proportion of methylated reads to calculate the number of methylated and unmethylated reads
         total_num_reads = bed_data.at[selected_cytosine, "uc"] + bed_data.at[selected_cytosine, "mc"]
@@ -87,15 +86,17 @@ def produce_dmr_iter_rand(start: int, end: int, original_pm: float) -> None:
     return bed_data.loc[start:end, "prop"].mean()
 
 def modification_handler(region_num: int) -> None:
-    start, end, original_pm = (regions.at[region_num, "start_row"], regions.at[region_num, "end_row"], regions.at[region_num, "original_pm"])
+    start, end, original_pm, inc_or_dec = (regions.at[region_num, "start_row"], regions.at[region_num, "end_row"],
+                                           regions.at[region_num, "original_pm"], regions.at[region_num, "inc_or_dec"])
     if regions.at[region_num, "is_dmr"]:
         print(f"Producing DMR for region {start} to {end} with original pm {original_pm}")
-        new_pm = produce_dmr_iter_rand(start, end, original_pm)
+        new_pm = produce_dmr_iter_rand(start, end, original_pm, inc_or_dec)
     else:
         print(f"Simulating reads for region {start} to {end} with original pm {original_pm}")
         new_pm = simulate_reads_for_region(start, end)
     print(f"\t New pm is {new_pm}")
     regions.at[region_num, "new_pm"] = new_pm
+    regions.at[region_num, "percent_diff"] = abs(new_pm - original_pm)
 
 # Divide the bed files into different regions 
 def define_regions() -> pd.DataFrame:
@@ -130,8 +131,14 @@ def define_regions() -> pd.DataFrame:
         is_dmr = int(rng.random() < chance_of_dmr)
         num_dmrs += is_dmr
 
+        # Occasionally decrease methylation instead of increasing it
         if is_dmr:
             inc_or_dec = "+" if rng.random() < CHANCE_OF_INCREASE_IN_METHYLATION else "-"
+            # Handle the edge case where the region can't have enough percent difference to hit threshold
+            if inc_or_dec == "+" and (100 - original_pm) < PERCENT_DIFF_TO_BE_CALLED_AS_DMR:
+                inc_or_dec = "-"
+            if inc_or_dec == "-" and original_pm < PERCENT_DIFF_TO_BE_CALLED_AS_DMR:
+                inc_or_dec = "+"
         else:
             inc_or_dec = "N/A"
 
