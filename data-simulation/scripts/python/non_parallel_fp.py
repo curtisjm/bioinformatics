@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 
 # BED_FILE = "../../real-data/100_test.bed"
-BED_FILE = "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/100_test.bed"
+BED_FILE = "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/D23_Col0_all_CpG.bed"
 OUT_DIR_DATA = "./"
 OUT_DIR_REGIONS = "./"
 DEPTH = 25
@@ -14,9 +14,9 @@ READ_VARIATION = 0.15
 # NUM_DMRS = 1000
 # MIN_REGION_SIZE = 20
 # MAX_REGION_SIZE = 3000
-ESTIMATED_NUM_DMRS = 10
-MIN_REGION_SIZE = 2
-MAX_REGION_SIZE = 15
+ESTIMATED_NUM_DMRS = 1000
+MIN_REGION_SIZE = 20
+MAX_REGION_SIZE = 3000
 PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
 CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 
@@ -135,9 +135,9 @@ def define_regions() -> pd.DataFrame:
         if is_dmr:
             inc_or_dec = "+" if rng.random() < CHANCE_OF_INCREASE_IN_METHYLATION else "-"
             # Handle the edge case where the region can't have enough percent difference to hit threshold
-            if inc_or_dec == "+" and (100 - original_pm) < PERCENT_DIFF_TO_BE_CALLED_AS_DMR:
+            if inc_or_dec == "+" and (100 - original_pm) <= 100 * PERCENT_DIFF_TO_BE_CALLED_AS_DMR:
                 inc_or_dec = "-"
-            if inc_or_dec == "-" and original_pm < PERCENT_DIFF_TO_BE_CALLED_AS_DMR:
+            if inc_or_dec == "-" and original_pm <= 100 * PERCENT_DIFF_TO_BE_CALLED_AS_DMR:
                 inc_or_dec = "+"
         else:
             inc_or_dec = "N/A"
