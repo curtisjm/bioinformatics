@@ -2,8 +2,8 @@ import os
 import pandas as pd
 import numpy as np
 
-# BED_FILE = "../../real-data/100_test.bed"
-BED_FILE = "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/D23_Col0_all_CpG.bed"
+BED_FILE = "../../real-data/D23_Col0_all_CpG.bed"
+# BED_FILE = "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/D23_Col0_all_CpG.bed"
 OUT_DIR_DATA = "./"
 OUT_DIR_REGIONS = "./"
 DEPTH = 25
