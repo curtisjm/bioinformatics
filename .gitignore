@@ -1,4 +1,6 @@
 *.bed
+*.tsv
+*.csv
 .vscode/
 __pycache__
 .DS_Store
