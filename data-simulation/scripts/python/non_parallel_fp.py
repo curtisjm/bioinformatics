@@ -2,21 +2,20 @@ import os
 import pandas as pd
 import numpy as np
 
-BED_FILE = "../../real-data/D23_Col0_all_CpG.bed"
-# BED_FILE = "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/D23_Col0_all_CpG.bed"
+# BED_FILE = "../../real-data/D23_Col0_all_CpG.bed"
+BED_FILE = "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/10k_test.bed"
 OUT_DIR_DATA = "./"
 OUT_DIR_REGIONS = "./"
 DEPTH = 25
 NUM_SAMPLES = 1
-#TODO: change this to standard deviation
 STD_DEV = 0.15
 READ_VARIATION = 0.15
-# NUM_DMRS = 1000
+# ESTIMATED_NUM_DMRS = 1000
 # MIN_REGION_SIZE = 20
 # MAX_REGION_SIZE = 3000
-ESTIMATED_NUM_DMRS = 1000
-MIN_REGION_SIZE = 20
-MAX_REGION_SIZE = 3000
+ESTIMATED_NUM_DMRS = 100
+MIN_REGION_SIZE = 5
+MAX_REGION_SIZE = 100
 PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
 CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 
@@ -62,11 +61,13 @@ def percent_diff(original_pm: float, start: int, end: int) -> float:
     return abs(new_pm - original_pm)
 
 def produce_dmr_iter_rand(start: int, end: int, original_pm: float, inc_or_dec: str) -> None:
-    goal_percent_diff = 100 * rng.random() * PERCENT_DIFF_TO_BE_CALLED_AS_DMR
+    min_percent_diff = PERCENT_DIFF_TO_BE_CALLED_AS_DMR
+    max_percent_diff = 1 - original_pm / 100
+    goal_percent_diff = 100 * (rng.random() * (max_percent_diff - min_percent_diff) + min_percent_diff)
     # Select a random cytosine to change the methylation of and increase or decrease it's methlyation until the goal is reached
     while percent_diff(original_pm, start, end) < goal_percent_diff:
         # Select which cytosine we are modifying
-        selected_cytosine = rng.integers(start, end)
+        selected_cytosine = rng.integers(start, end, endpoint=True)
         inc_or_dec_multiplier = 1 if inc_or_dec == "+" else -1
         
         # Determine how much to change the methylation of the cytosine
@@ -145,7 +146,7 @@ def define_regions() -> pd.DataFrame:
         new_row = pd.DataFrame([[current_start, current_end, bed_data.at[current_start, "start"],
                                  bed_data.at[current_end, "end"], original_pm, 0.0, 0.0, is_dmr, inc_or_dec]], columns=cols)
         regions_df = pd.concat([regions_df, new_row], ignore_index=True) if not regions_df.empty else new_row
-        current_start = current_end
+        current_start = current_end + 1
     return regions_df
         
 col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
