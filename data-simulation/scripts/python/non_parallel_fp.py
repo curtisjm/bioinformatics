@@ -55,7 +55,6 @@ def simulate_reads_for_region(start: int, end: int) -> float:
 
     return new_pm / (end - start)
 
-
 def percent_diff(original_pm: float, start: int, end: int) -> float:
     new_pm = bed_data.loc[start:end, "prop"].mean()
     return abs(new_pm - original_pm)

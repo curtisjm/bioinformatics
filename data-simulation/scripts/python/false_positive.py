@@ -27,7 +27,9 @@ class SimulationActor():
     def __init__(self, global_state: object):
         self.global_state = global_state
 
-    def modification_handler(self, bed_data: DataFrame, regions: DataFrame, region_num: int) -> None:
+    def modification_handler(self, region_num: int) -> None:
+        regions = ray.get(self.global_state.get_regions.remote())
+
         start, end, original_pm, inc_or_dec = (regions.at[region_num, "start_row"], regions.at[region_num, "end_row"],
                                                regions.at[region_num, "original_pm"], regions.at[region_num, "inc_or_dec"])
         if regions.at[region_num, "is_dmr"]:
@@ -37,44 +39,50 @@ class SimulationActor():
             print(f"Simulating reads for region {start} to {end} with original pm {original_pm}")
             new_pm = self.simulate_reads_for_region(start, end)
         print(f"\t New pm is {new_pm}")
-        regions.at[region_num, "new_pm"] = new_pm
-        regions.at[region_num, "percent_diff"] = abs(new_pm - original_pm)
+        self.global_state.update_regions_entry.remote(region_num, "new_pm", new_pm)
+        self.global_state.update_regions_entry.remote(region_num, "percent_diff", abs(new_pm - original_pm))
 
     def produce_dmr_iter_rand(self, start: int, end: int, original_pm: float, inc_or_dec: str) -> None:
+        bed_data = ray.get(self.global_state.get_bed_data.remote())
+
         min_percent_diff = PERCENT_DIFF_TO_BE_CALLED_AS_DMR
         max_percent_diff = 1 - original_pm / 100
-        goal_percent_diff = 100 * (rng.random() * (max_percent_diff - min_percent_diff) + min_percent_diff)
+        goal_percent_diff = 100 * (ray.get(self.global_state.rand.remote()) * (max_percent_diff - min_percent_diff) + min_percent_diff)
         # Select a random cytosine to change the methylation of and increase or decrease it's methlyation until the goal is reached
-        while percent_diff(original_pm, start, end) < goal_percent_diff:
+        while self.percent_diff(original_pm, start, end) < goal_percent_diff:
             # Select which cytosine we are modifying
-            selected_cytosine = rng.integers(start, end, endpoint=True)
+            selected_cytosine = self.global_state.rand_int.remote(start, end, endpoint=True)
             inc_or_dec_multiplier = 1 if inc_or_dec == "+" else -1
 
             # Determine how much to change the methylation of the cytosine
             min_delta = 0
             max_delta = 100 - bed_data.at[selected_cytosine, "prop"]
-            delta = rng.random() * (max_delta - min_delta) + min_delta
-            bed_data.at[selected_cytosine, "prop"] += delta * inc_or_dec_multiplier
+            delta = ray.get(self.global_state.rand.remote()) * (max_delta - min_delta) + min_delta
+            new_prop = bed_data.at[selected_cytosine, "prop"] + delta * inc_or_dec_multiplier
 
             # Use the new proportion of methylated reads to calculate the number of methylated and unmethylated reads
             total_num_reads = bed_data.at[selected_cytosine, "uc"] + bed_data.at[selected_cytosine, "mc"]
-            bed_data.at[selected_cytosine, "mc"] = round(total_num_reads * bed_data.at[selected_cytosine, "prop"] / 100)
-            bed_data.at[selected_cytosine, "uc"] = total_num_reads - bed_data.at[selected_cytosine, "mc"] 
+            new_mc = round(total_num_reads * new_prop / 100)
+            new_uc = total_num_reads - new_mc 
+            self.global_state.update_bed_data_entry.remote(selected_cytosine, "mc", new_mc)
+            self.global_state.update_bed_data_entry.remote(selected_cytosine, "uc", new_uc)
 
             # Update the proportion of methylated reads to reflected modified counts
-            bed_data.at[selected_cytosine, "prop"] = 100 * bed_data.at[selected_cytosine, "mc"] / total_num_reads
+            new_prop = 100 * new_mc / total_num_reads
+            self.global_state.update_bed_data_entry.remote(selected_cytosine, "prop", new_prop)
 
-        return bed_data.loc[start:end, "prop"].mean()
+        return ray.get(self.global_state.get_average_methylation.remote(start, end)) 
 
     # For regions that are not DMRs, simulate the variation in reads
     def simulate_reads_for_region(self, start: int, end: int) -> float:
+        bed_data = ray.get(self.global_state.get_bed_data.remote())
         new_pm = 0
 
         for row in range(start, end):
-            uc_count, mc_count, sim_prop = simulate_reads(bed_data.at[row, "prop"])
-            bed_data.at[row, "uc"] = uc_count
-            bed_data.at[row, "mc"] = mc_count
-            bed_data.at[row, "prop"] = sim_prop
+            uc_count, mc_count, sim_prop = self.simulate_reads(bed_data.at[row, "prop"])
+            self.global_state.update_bed_data_entry.remote(row, "uc", uc_count)
+            self.global_state.update_bed_data_entry.remote(row, "mc", mc_count)
+            self.global_state.update_bed_data_entry.remote(row, "prop", sim_prop)
 
             new_pm += sim_prop
 
@@ -89,12 +97,12 @@ class SimulationActor():
 
         # Randomize the number of reads for each cytosine by adding a random number between
         # -READ_VARIATION * DEPTH and READ_VARIATION * DEPTH to the set depth
-        num_reads = int(DEPTH + DEPTH * READ_VARIATION * (2 * rng.random() - 1))
+        num_reads = int(DEPTH + DEPTH * READ_VARIATION * (2 * ray.get(self.global_state.rand.remote()) - 1))
 
         # Perform a weighted coin flip to determine if the cytosine is read as methylated or not by
         # generating a random number between 0 and 1 and checking if it is less than the true proportion of methylation
         #TODO: change this to normal distribution and find standard deviation
-        random_values = 100 * rng.random(num_reads)
+        random_values = 100 * ray.get(self.global_state.rand_array.remote(num_reads))
         mc_count = np.sum(random_values < prop)
         uc_count = num_reads - mc_count
 
@@ -103,7 +111,7 @@ class SimulationActor():
         return (uc_count, mc_count, sim_prop)
 
     def percent_diff(self, original_pm: float, start: int, end: int) -> float:
-        new_pm = bed_data.loc[start:end, "prop"].mean()
+        new_pm = ray.get(self.global_state.get_average_methylation.remote(start, end))
         return abs(new_pm - original_pm)
 
 @ray.remote
@@ -192,8 +200,11 @@ class GlobalStateActor():
 
     def get_range_of_regions(self, start: int, end: int, col: str) -> DataFrame:
         return self.regions.loc[start:end, col]
+
+    def get_average_methylation(self, start: int, end: int) -> float:
+        return self.bed_data.loc[start:end, "prop"].mean()
     
-    def update_bed_date_entry(self, row: int, col: str, value) -> None:
+    def update_bed_data_entry(self, row: int, col: str, value) -> None:
         self.bed_data.at[row, col] = value
 
     def update_regions_entry(self, row: int, col: str, value) -> None:
@@ -207,6 +218,15 @@ class GlobalStateActor():
     
     def append_row_to_regions(self, new_row: DataFrame) -> None:
         return
+
+    def rand(self) -> float:
+        return self.rng.random()
+    
+    def rand_array(self, size: int) -> np.ndarray:
+        return self.rng.random(size)
+    
+    def rand_int(self, start: int, end: int, end_inclusive: bool) -> int:
+        return self.rng.integers(start, end, endpoint=end_inclusive)
     
     def bed_data_to_to_csv(self) -> None:
         # Output the simulated data to a new bed file
