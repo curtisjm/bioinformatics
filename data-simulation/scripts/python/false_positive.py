@@ -6,7 +6,9 @@ import pandas as pd
 import numpy as np
 
 # BED_FILE = "../../real-data/D23_Col0_all_CpG.bed"
-BED_FILE = "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/10k_test.bed"
+BED_FILE = (
+    "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/10k_test.bed"
+)
 OUT_DIR_DATA = "./"
 OUT_DIR_REGIONS = "./"
 DEPTH = 25
@@ -22,56 +24,89 @@ MAX_REGION_SIZE = 100
 PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
 CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 
+
 @ray.remote
-class SimulationActor():
+class SimulationActor:
     def __init__(self, global_state: object):
         self.global_state = global_state
 
     def modification_handler(self, region_num: int) -> None:
         regions = ray.get(self.global_state.get_regions.remote())
 
-        start, end, original_pm, inc_or_dec = (regions.at[region_num, "start_row"], regions.at[region_num, "end_row"],
-                                               regions.at[region_num, "original_pm"], regions.at[region_num, "inc_or_dec"])
+        start, end, original_pm, inc_or_dec = (
+            regions.at[region_num, "start_row"],
+            regions.at[region_num, "end_row"],
+            regions.at[region_num, "original_pm"],
+            regions.at[region_num, "inc_or_dec"],
+        )
         if regions.at[region_num, "is_dmr"]:
-            print(f"Producing DMR for region {start} to {end} with original pm {original_pm}")
+            print(
+                f"Producing DMR for region {start} to {end} with original pm {original_pm}"
+            )
             new_pm = self.produce_dmr_iter_rand(start, end, original_pm, inc_or_dec)
         else:
-            print(f"Simulating reads for region {start} to {end} with original pm {original_pm}")
+            print(
+                f"Simulating reads for region {start} to {end} with original pm {original_pm}"
+            )
             new_pm = self.simulate_reads_for_region(start, end)
         print(f"\t New pm is {new_pm}")
         self.global_state.update_regions_entry.remote(region_num, "new_pm", new_pm)
-        self.global_state.update_regions_entry.remote(region_num, "percent_diff", abs(new_pm - original_pm))
+        self.global_state.update_regions_entry.remote(
+            region_num, "percent_diff", abs(new_pm - original_pm)
+        )
 
-    def produce_dmr_iter_rand(self, start: int, end: int, original_pm: float, inc_or_dec: str) -> None:
+    def produce_dmr_iter_rand(
+        self, start: int, end: int, original_pm: float, inc_or_dec: str
+    ) -> None:
         bed_data = ray.get(self.global_state.get_bed_data.remote())
 
         min_percent_diff = PERCENT_DIFF_TO_BE_CALLED_AS_DMR
         max_percent_diff = 1 - original_pm / 100
-        goal_percent_diff = 100 * (ray.get(self.global_state.rand.remote()) * (max_percent_diff - min_percent_diff) + min_percent_diff)
+        goal_percent_diff = 100 * (
+            ray.get(self.global_state.rand.remote())
+            * (max_percent_diff - min_percent_diff)
+            + min_percent_diff
+        )
         # Select a random cytosine to change the methylation of and increase or decrease it's methlyation until the goal is reached
         while self.percent_diff(original_pm, start, end) < goal_percent_diff:
             # Select which cytosine we are modifying
-            selected_cytosine = self.global_state.rand_int.remote(start, end, endpoint=True)
+            selected_cytosine = self.global_state.rand_int.remote(
+                start, end, endpoint=True
+            )
             inc_or_dec_multiplier = 1 if inc_or_dec == "+" else -1
 
             # Determine how much to change the methylation of the cytosine
             min_delta = 0
             max_delta = 100 - bed_data.at[selected_cytosine, "prop"]
-            delta = ray.get(self.global_state.rand.remote()) * (max_delta - min_delta) + min_delta
-            new_prop = bed_data.at[selected_cytosine, "prop"] + delta * inc_or_dec_multiplier
+            delta = (
+                ray.get(self.global_state.rand.remote()) * (max_delta - min_delta)
+                + min_delta
+            )
+            new_prop = (
+                bed_data.at[selected_cytosine, "prop"] + delta * inc_or_dec_multiplier
+            )
 
             # Use the new proportion of methylated reads to calculate the number of methylated and unmethylated reads
-            total_num_reads = bed_data.at[selected_cytosine, "uc"] + bed_data.at[selected_cytosine, "mc"]
+            total_num_reads = (
+                bed_data.at[selected_cytosine, "uc"]
+                + bed_data.at[selected_cytosine, "mc"]
+            )
             new_mc = round(total_num_reads * new_prop / 100)
-            new_uc = total_num_reads - new_mc 
-            self.global_state.update_bed_data_entry.remote(selected_cytosine, "mc", new_mc)
-            self.global_state.update_bed_data_entry.remote(selected_cytosine, "uc", new_uc)
+            new_uc = total_num_reads - new_mc
+            self.global_state.update_bed_data_entry.remote(
+                selected_cytosine, "mc", new_mc
+            )
+            self.global_state.update_bed_data_entry.remote(
+                selected_cytosine, "uc", new_uc
+            )
 
             # Update the proportion of methylated reads to reflected modified counts
             new_prop = 100 * new_mc / total_num_reads
-            self.global_state.update_bed_data_entry.remote(selected_cytosine, "prop", new_prop)
+            self.global_state.update_bed_data_entry.remote(
+                selected_cytosine, "prop", new_prop
+            )
 
-        return ray.get(self.global_state.get_average_methylation.remote(start, end)) 
+        return ray.get(self.global_state.get_average_methylation.remote(start, end))
 
     # For regions that are not DMRs, simulate the variation in reads
     def simulate_reads_for_region(self, start: int, end: int) -> float:
@@ -87,7 +122,7 @@ class SimulationActor():
             new_pm += sim_prop
 
         return new_pm / (end - start)
-    
+
     # Using a given proportion of methylation, simulate reads of each cytosine and
     # mutating the unmethylateted counts, methylated counts, and proportion of methylation
     # in the original data frame
@@ -97,11 +132,16 @@ class SimulationActor():
 
         # Randomize the number of reads for each cytosine by adding a random number between
         # -READ_VARIATION * DEPTH and READ_VARIATION * DEPTH to the set depth
-        num_reads = int(DEPTH + DEPTH * READ_VARIATION * (2 * ray.get(self.global_state.rand.remote()) - 1))
+        num_reads = int(
+            DEPTH
+            + DEPTH
+            * READ_VARIATION
+            * (2 * ray.get(self.global_state.rand.remote()) - 1)
+        )
 
         # Perform a weighted coin flip to determine if the cytosine is read as methylated or not by
         # generating a random number between 0 and 1 and checking if it is less than the true proportion of methylation
-        #TODO: change this to normal distribution and find standard deviation
+        # TODO: change this to normal distribution and find standard deviation
         random_values = 100 * ray.get(self.global_state.rand_array.remote(num_reads))
         mc_count = np.sum(random_values < prop)
         uc_count = num_reads - mc_count
@@ -114,21 +154,34 @@ class SimulationActor():
         new_pm = ray.get(self.global_state.get_average_methylation.remote(start, end))
         return abs(new_pm - original_pm)
 
+
 @ray.remote
-class GlobalStateActor():
+class GlobalStateActor:
     def __init__(self) -> None:
         self.num_dmrs = 0
         # Load data from bed file into a pandas dataframe
         self.col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
-        self.bed_data = pd.read_csv(BED_FILE, sep='\t', names=self.col_labels, header=None)
+        self.bed_data = pd.read_csv(
+            BED_FILE, sep="\t", names=self.col_labels, header=None
+        )
         self.regions = self.define_regions()
         self.num_regions = self.regions.shape[0]
         self.rng = np.random.default_rng()
-    
-    # Divide the bed files into different regions 
+
+    # Divide the bed files into different regions
     def define_regions(self) -> DataFrame:
         # pm stands for percent methylation
-        cols = ["start_row", "end_row", "start_coord", "end_coord", "original_pm", "new_pm", "percent_diff", "is_dmr", "inc_or_dec"]
+        cols = [
+            "start_row",
+            "end_row",
+            "start_coord",
+            "end_coord",
+            "original_pm",
+            "new_pm",
+            "percent_diff",
+            "is_dmr",
+            "inc_or_dec",
+        ]
         regions_df = DataFrame(columns=cols)
         current_start = 0
         num_rows = self.bed_data.shape[0]
@@ -146,7 +199,10 @@ class GlobalStateActor():
                 current_end = self.bed_data.shape[0] - 1
 
             # Make sure the region does not span multiple chromosomes
-            while self.bed_data.at[current_start, "chr"] != self.bed_data.at[current_end, "chr"]:
+            while (
+                self.bed_data.at[current_start, "chr"]
+                != self.bed_data.at[current_end, "chr"]
+            ):
                 current_end -= 1
 
             # Calculate average percent methylation for the region
@@ -159,18 +215,46 @@ class GlobalStateActor():
 
             # Occasionally decrease methylation instead of increasing it
             if is_dmr:
-                inc_or_dec = "+" if self.rng.random() < CHANCE_OF_INCREASE_IN_METHYLATION else "-"
+                inc_or_dec = (
+                    "+"
+                    if self.rng.random() < CHANCE_OF_INCREASE_IN_METHYLATION
+                    else "-"
+                )
                 # Handle the edge case where the region can't have enough percent difference to hit threshold
-                if inc_or_dec == "+" and (100 - original_pm) <= 100 * PERCENT_DIFF_TO_BE_CALLED_AS_DMR:
+                if (
+                    inc_or_dec == "+"
+                    and (100 - original_pm) <= 100 * PERCENT_DIFF_TO_BE_CALLED_AS_DMR
+                ):
                     inc_or_dec = "-"
-                if inc_or_dec == "-" and original_pm <= 100 * PERCENT_DIFF_TO_BE_CALLED_AS_DMR:
+                if (
+                    inc_or_dec == "-"
+                    and original_pm <= 100 * PERCENT_DIFF_TO_BE_CALLED_AS_DMR
+                ):
                     inc_or_dec = "+"
             else:
                 inc_or_dec = "N/A"
 
-            new_row = DataFrame([[current_start, current_end, self.bed_data.at[current_start, "start"],
-                                     self.bed_data.at[current_end, "end"], original_pm, 0.0, 0.0, is_dmr, inc_or_dec]], columns=cols)
-            regions_df = pd.concat([regions_df, new_row], ignore_index=True) if not regions_df.empty else new_row
+            new_row = DataFrame(
+                [
+                    [
+                        current_start,
+                        current_end,
+                        self.bed_data.at[current_start, "start"],
+                        self.bed_data.at[current_end, "end"],
+                        original_pm,
+                        0.0,
+                        0.0,
+                        is_dmr,
+                        inc_or_dec,
+                    ]
+                ],
+                columns=cols,
+            )
+            regions_df = (
+                pd.concat([regions_df, new_row], ignore_index=True)
+                if not regions_df.empty
+                else new_row
+            )
             current_start = current_end + 1
         return regions_df
 
@@ -182,19 +266,19 @@ class GlobalStateActor():
 
     def get_bed_data(self) -> DataFrame:
         return self.bed_data
-    
+
     def get_regions(self) -> DataFrame:
         return self.regions
-    
+
     def get_rng(self) -> Generator:
         return self.rng
-    
+
     def get_bed_data_entry(self, row: int, col: str) -> object:
         return self.bed_data.at[row, col]
-    
+
     def get_regions_entry(self, row: int, col: str) -> object:
         return self.regions.at[row, col]
-    
+
     def get_range_of_bed_data(self, start: int, end: int, col: str) -> DataFrame:
         return self.bed_data.loc[start:end, col]
 
@@ -203,40 +287,47 @@ class GlobalStateActor():
 
     def get_average_methylation(self, start: int, end: int) -> float:
         return self.bed_data.loc[start:end, "prop"].mean()
-    
+
     def update_bed_data_entry(self, row: int, col: str, value) -> None:
         self.bed_data.at[row, col] = value
 
     def update_regions_entry(self, row: int, col: str, value) -> None:
         self.regions.at[row, col] = value
 
-    def update_range_of_bed_data(self, start: int, end: int, col: str, new_column_segment: DataFrame) -> None:
+    def update_range_of_bed_data(
+        self, start: int, end: int, col: str, new_column_segment: DataFrame
+    ) -> None:
         self.bed_data.loc[start:end, col] = new_column_segment
-    
-    def update_range_of_regions(self, start: int, end: int, col: str, new_column_segment: DataFrame) -> None:
+
+    def update_range_of_regions(
+        self, start: int, end: int, col: str, new_column_segment: DataFrame
+    ) -> None:
         self.regions.loc[start:end, col] = new_column_segment
-    
+
     def append_row_to_regions(self, new_row: DataFrame) -> None:
         return
 
     def rand(self) -> float:
         return self.rng.random()
-    
+
     def rand_array(self, size: int) -> np.ndarray:
         return self.rng.random(size)
-    
+
     def rand_int(self, start: int, end: int, end_inclusive: bool) -> int:
         return self.rng.integers(start, end, endpoint=end_inclusive)
-    
+
     def bed_data_to_to_csv(self) -> None:
         # Output the simulated data to a new bed file
         # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
         output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
-        self.bed_data.to_csv(output_data_filename, sep='\t', index=False, header=False)
-    
+        self.bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
+
     def regions_to_csv(self) -> None:
-        output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
-        self.regions.to_csv(output_region_filename, sep='\t', index=False, header=True)
+        output_region_filename = os.path.join(
+            OUT_DIR_REGIONS, "false_pos_test_regions.tsv"
+        )
+        self.regions.to_csv(output_region_filename, sep="\t", index=False, header=True)
+
 
 for region_num in range(regions.shape[0]):
     modification_handler(region_num)
@@ -244,7 +335,7 @@ for region_num in range(regions.shape[0]):
 # Output the simulated data to a new bed file
 # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
 output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
-bed_data.to_csv(output_data_filename, sep='\t', index=False, header=False)
+bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
 
 output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
-regions.to_csv(output_region_filename, sep='\t', index=False, header=True)
+regions.to_csv(output_region_filename, sep="\t", index=False, header=True)
