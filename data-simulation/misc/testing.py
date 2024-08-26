@@ -33,6 +33,7 @@ class SimulationActor():
         return self.global_state.get_rng.remote()
 
     def maybe_modify(self, df=ray.get(global_state.get_df.remote())):
+        return
         
 
     

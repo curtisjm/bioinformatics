@@ -1,3 +1,4 @@
+from ray.util import ActorPool
 from typing import Generator
 from numpy import DataFrame
 import ray
@@ -29,6 +30,10 @@ CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 class SimulationActor:
     def __init__(self, global_state: object):
         self.global_state = global_state
+
+    def driver(self, first_region: int, last_region: int) -> None:
+        for region_num in range(first_region, last_region + 1):
+            self.modification_handler(region_num)
 
     def modification_handler(self, region_num: int) -> None:
         regions = ray.get(self.global_state.get_regions.remote())
@@ -70,9 +75,7 @@ class SimulationActor:
         # Select a random cytosine to change the methylation of and increase or decrease it's methlyation until the goal is reached
         while self.percent_diff(original_pm, start, end) < goal_percent_diff:
             # Select which cytosine we are modifying
-            selected_cytosine = self.global_state.rand_int.remote(
-                start, end, endpoint=True
-            )
+            selected_cytosine = self.global_state.rand_int.remote(start, end, True)
             inc_or_dec_multiplier = 1 if inc_or_dec == "+" else -1
 
             # Determine how much to change the methylation of the cytosine
@@ -329,13 +332,32 @@ class GlobalStateActor:
         self.regions.to_csv(output_region_filename, sep="\t", index=False, header=True)
 
 
-for region_num in range(regions.shape[0]):
-    modification_handler(region_num)
+if __name__ == "__main__":
+    ray.init()
+
+    gs = GlobalStateActor.remote()
+    num_regions = ray.get(gs.get_num_regions.remote())
+    num_cores = int(ray.available_resources()["CPU"])
+    num_regions_per_core = num_regions // num_cores
+    region_ranges = [(i * num_regions_per_core, (i + 1) * num_regions_per_core - 1) for i in range(num_cores)]
+    if num_regions % num_cores:
+        region_ranges[-1] = (region_ranges[-1][0], num_regions - 1)
+
+    pool = ActorPool([SimulationActor.remote(gs) for _ in range(2 * num_cores)])
+    pool.map(
+        lambda actor, region_range: actor.driver.remote(*region_range),
+        region_ranges,
+    )
+
+    ray.get(gs.bed_data_to_to_csv.remote())
+    ray.get(gs.regions_to_csv.remote())
+
+    ray.shutdown()
 
 # Output the simulated data to a new bed file
 # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
-output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
-bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
+# output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
+# bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
 
-output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
-regions.to_csv(output_region_filename, sep="\t", index=False, header=True)
+# output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
+# regions.to_csv(output_region_filename, sep="\t", index=False, header=True)
