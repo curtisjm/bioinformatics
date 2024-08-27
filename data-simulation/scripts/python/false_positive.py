@@ -9,22 +9,22 @@ import ray
 import pandas as pd
 import numpy as np
 
-# BED_FILE = "../../real-data/D23_Col0_all_CpG.bed"
-BED_FILE = (
-    "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/10k_test.bed"
-)
+BED_FILE = "../../real-data/D23_Col0_all_CpG.bed"
+# BED_FILE = (
+#     "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/10k_test.bed"
+# )
 OUT_DIR_DATA = "./"
 OUT_DIR_REGIONS = "./"
 DEPTH = 25
 NUM_SAMPLES = 1
 STD_DEV = 0.15
 READ_VARIATION = 0.15
-# ESTIMATED_NUM_DMRS = 1000
-# MIN_REGION_SIZE = 20
-# MAX_REGION_SIZE = 3000
-ESTIMATED_NUM_DMRS = 100
-MIN_REGION_SIZE = 5
-MAX_REGION_SIZE = 100
+ESTIMATED_NUM_DMRS = 1000
+MIN_REGION_SIZE = 20
+MAX_REGION_SIZE = 3000
+# ESTIMATED_NUM_DMRS = 100
+# MIN_REGION_SIZE = 5
+# MAX_REGION_SIZE = 100
 PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
 CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 
