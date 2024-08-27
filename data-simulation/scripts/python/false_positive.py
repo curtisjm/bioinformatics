@@ -342,13 +342,11 @@ class GlobalStateActor:
     def bed_data_to_to_csv(self) -> None:
         # Output the simulated data to a new bed file
         # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
-        output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
+        output_data_filename = os.path.join(OUT_DIR_DATA, "fp_test.bed")
         self.bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
 
     def regions_to_csv(self) -> None:
-        output_region_filename = os.path.join(
-            OUT_DIR_REGIONS, "false_pos_test_regions.tsv"
-        )
+        output_region_filename = os.path.join(OUT_DIR_REGIONS, "fp_test_regions.tsv")
         self.regions.to_csv(output_region_filename, sep="\t", index=False, header=True)
 
 

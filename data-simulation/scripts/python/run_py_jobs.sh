@@ -1,12 +1,12 @@
 #!/bin/bash
 
-#SBATCH --job-name=false_positive_test
+#SBATCH --job-name=fp_test_parallel
 
 #SBATCH --account=fc_williamslab
 
-#SBATCH --partition=savio3
+#SBATCH --partition=savio3_bigmem
 
-#SBATCH --time=20:00:00
+#SBATCH --time=02:00:00
 
 module load python
-python non_parallel_fp.py
+python false_positive.py
