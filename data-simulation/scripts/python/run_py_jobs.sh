@@ -6,7 +6,7 @@
 
 #SBATCH --partition=savio3
 
-#SBATCH --time=00:30:00
+#SBATCH --time=20:00:00
 
 module load python
 python non_parallel_fp.py
