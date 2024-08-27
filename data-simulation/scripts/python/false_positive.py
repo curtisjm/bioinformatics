@@ -36,7 +36,7 @@ class SimulationActor:
 
     def driver(self, first_region: int, last_region: int) -> None:
         for region_num in range(first_region, last_region + 1):
-            print("In driver loop")
+            # print("In driver loop")
             self.modification_handler(region_num)
 
     def modification_handler(self, region_num: int) -> None:
@@ -67,7 +67,6 @@ class SimulationActor:
     def produce_dmr_iter_rand(
         self, start: int, end: int, original_pm: float, inc_or_dec: str
     ) -> None:
-        bed_data = ray.get(self.global_state.get_bed_data.remote())
 
         min_percent_diff = PERCENT_DIFF_TO_BE_CALLED_AS_DMR
         max_percent_diff = 1 - original_pm / 100
@@ -77,8 +76,10 @@ class SimulationActor:
             + min_percent_diff
         )
         # Select a random cytosine to change the methylation of and increase or decrease it's methlyation until the goal is reached
-        while self.percent_diff(original_pm, start, end) < goal_percent_diff:
-            print("In percent diff loop")
+        percent_diff = self.percent_diff(original_pm, start, end)
+        while percent_diff < goal_percent_diff:
+            # print(f"In percent diff loop: PD: {percent_diff}, GPD: {goal_percent_diff}")
+
             # Select which cytosine we are modifying
             selected_cytosine = ray.get(
                 self.global_state.rand_int.remote(start, end, True)
@@ -87,19 +88,27 @@ class SimulationActor:
 
             # Determine how much to change the methylation of the cytosine
             min_delta = 0
-            max_delta = 100 - bed_data.at[selected_cytosine, "prop"]
+            max_delta = 100 - ray.get(
+                self.global_state.get_bed_data_entry.remote(selected_cytosine, "prop")
+            )
             delta = (
                 ray.get(self.global_state.rand.remote()) * (max_delta - min_delta)
                 + min_delta
             )
             new_prop = (
-                bed_data.at[selected_cytosine, "prop"] + delta * inc_or_dec_multiplier
+                ray.get(
+                    self.global_state.get_bed_data_entry.remote(
+                        selected_cytosine, "prop"
+                    )
+                )
+                + delta * inc_or_dec_multiplier
             )
 
             # Use the new proportion of methylated reads to calculate the number of methylated and unmethylated reads
-            total_num_reads = (
-                bed_data.at[selected_cytosine, "uc"]
-                + bed_data.at[selected_cytosine, "mc"]
+            total_num_reads = ray.get(
+                self.global_state.get_bed_data_entry.remote(selected_cytosine, "uc")
+            ) + ray.get(
+                self.global_state.get_bed_data_entry.remote(selected_cytosine, "mc")
             )
             new_mc = round(total_num_reads * new_prop / 100)
             new_uc = total_num_reads - new_mc
@@ -116,6 +125,8 @@ class SimulationActor:
                 selected_cytosine, "prop", new_prop
             )
 
+            percent_diff = self.percent_diff(original_pm, start, end)
+
         return ray.get(self.global_state.get_average_methylation.remote(start, end))
 
     # For regions that are not DMRs, simulate the variation in reads
@@ -124,6 +135,7 @@ class SimulationActor:
         new_pm = 0
 
         for row in range(start, end):
+            # print("In simulate reads loop")
             uc_count, mc_count, sim_prop = self.simulate_reads(bed_data.at[row, "prop"])
             self.global_state.update_bed_data_entry.remote(row, "uc", uc_count)
             self.global_state.update_bed_data_entry.remote(row, "mc", mc_count)
@@ -162,6 +174,7 @@ class SimulationActor:
 
     def percent_diff(self, original_pm: float, start: int, end: int) -> float:
         new_pm = ray.get(self.global_state.get_average_methylation.remote(start, end))
+        # print(f"Original pm: {original_pm}, New pm: {new_pm}")
         return abs(new_pm - original_pm)
 
 
@@ -353,6 +366,8 @@ if __name__ == "__main__":
     if num_regions % num_cores:
         region_ranges[-1] = (region_ranges[-1][0], num_regions - 1)
 
+    # pool = ActorPool([SimulationActor.remote(gs)])
+    # region_ranges = [(0, num_regions - 1)]
     pool = ActorPool([SimulationActor.remote(gs) for _ in range(2 * num_cores)])
     list(
         pool.map(
@@ -365,11 +380,3 @@ if __name__ == "__main__":
     ray.get(gs.regions_to_csv.remote())
 
     ray.shutdown()
-
-# Output the simulated data to a new bed file
-# out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
-# output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
-# bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
-
-# output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
-# regions.to_csv(output_region_filename, sep="\t", index=False, header=True)
