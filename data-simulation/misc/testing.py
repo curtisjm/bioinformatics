@@ -1,3 +1,4 @@
+from ray.util import ActorPool
 import ray
 import pandas as pd
 import numpy as np
@@ -31,10 +32,10 @@ class SimulationActor():
     
     def random(self):
         return self.global_state.get_rng.remote()
+    
+    def p(self, i):
+        print(i)
 
-    def maybe_modify(self, df=ray.get(global_state.get_df.remote())):
-        return
-        
 
     
 ray.init()
@@ -43,7 +44,10 @@ gs = GlobalStateActor.remote()
 sa1 = SimulationActor.remote(gs)
 sa2 = SimulationActor.remote(gs)
 
+pool = ActorPool([sa1, sa2])
+list(pool.map(lambda actor, i: actor.p.remote(i), range(10))) 
+
 # futures = [sa1.modify.remote(0, "Name", "JOE"), sa2.modify.remote(1, "Name", "TOBY"), sa2.printer.remote()]
 # ray.get(futures)
-print(ray.get(sa1.random.remote()))
+# print(ray.get(sa1.random.remote()))
 

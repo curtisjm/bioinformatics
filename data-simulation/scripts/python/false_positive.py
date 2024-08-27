@@ -1,8 +1,11 @@
+import os
+
+os.environ["RAY_DEDUP_LOGS"] = "0"
+
 from ray.util import ActorPool
 from typing import Generator
-from numpy import DataFrame
+from pandas import DataFrame
 import ray
-import os
 import pandas as pd
 import numpy as np
 
@@ -33,6 +36,7 @@ class SimulationActor:
 
     def driver(self, first_region: int, last_region: int) -> None:
         for region_num in range(first_region, last_region + 1):
+            print("In driver loop")
             self.modification_handler(region_num)
 
     def modification_handler(self, region_num: int) -> None:
@@ -74,8 +78,11 @@ class SimulationActor:
         )
         # Select a random cytosine to change the methylation of and increase or decrease it's methlyation until the goal is reached
         while self.percent_diff(original_pm, start, end) < goal_percent_diff:
+            print("In percent diff loop")
             # Select which cytosine we are modifying
-            selected_cytosine = self.global_state.rand_int.remote(start, end, True)
+            selected_cytosine = ray.get(
+                self.global_state.rand_int.remote(start, end, True)
+            )
             inc_or_dec_multiplier = 1 if inc_or_dec == "+" else -1
 
             # Determine how much to change the methylation of the cytosine
@@ -167,9 +174,9 @@ class GlobalStateActor:
         self.bed_data = pd.read_csv(
             BED_FILE, sep="\t", names=self.col_labels, header=None
         )
+        self.rng = np.random.default_rng()
         self.regions = self.define_regions()
         self.num_regions = self.regions.shape[0]
-        self.rng = np.random.default_rng()
 
     # Divide the bed files into different regions
     def define_regions(self) -> DataFrame:
@@ -339,14 +346,19 @@ if __name__ == "__main__":
     num_regions = ray.get(gs.get_num_regions.remote())
     num_cores = int(ray.available_resources()["CPU"])
     num_regions_per_core = num_regions // num_cores
-    region_ranges = [(i * num_regions_per_core, (i + 1) * num_regions_per_core - 1) for i in range(num_cores)]
+    region_ranges = [
+        (i * num_regions_per_core, (i + 1) * num_regions_per_core - 1)
+        for i in range(num_cores)
+    ]
     if num_regions % num_cores:
         region_ranges[-1] = (region_ranges[-1][0], num_regions - 1)
 
     pool = ActorPool([SimulationActor.remote(gs) for _ in range(2 * num_cores)])
-    pool.map(
-        lambda actor, region_range: actor.driver.remote(*region_range),
-        region_ranges,
+    list(
+        pool.map(
+            lambda actor, region_range: actor.driver.remote(*region_range),
+            region_ranges,
+        )
     )
 
     ray.get(gs.bed_data_to_to_csv.remote())
