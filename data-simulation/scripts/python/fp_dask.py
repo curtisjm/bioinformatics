@@ -1,9 +1,15 @@
 import os
 
+import dask.array as da
+import dask.dataframe as dd
 import numpy as np
 import pandas as pd
+from dask.distributed import Client, progress
 
-BED_FILE = "../../real-data/D23_Col0_all_CpG.bed"
+# Set up Dask client
+client = Client()
+
+BED_FILE = "../../real-data/10k_test.bed"
 # BED_FILE = (
 #     "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/10k_test.bed"
 # )
@@ -21,6 +27,9 @@ MAX_REGION_SIZE = 3000
 # MAX_REGION_SIZE = 100
 PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
 CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
+
+col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
+bed_data = dd.read_csv(BED_FILE, sep="\t", names=col_labels, header=None)
 
 
 # Using a given proportion of methylation, simulate reads of each cytosine and
@@ -214,9 +223,6 @@ def define_regions() -> pd.DataFrame:
     return regions_df
 
 
-col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
-bed_data = pd.read_csv(BED_FILE, sep="\t", names=col_labels, header=None)
-
 rng = np.random.default_rng()
 
 regions = define_regions()
@@ -226,8 +232,8 @@ for region_num in range(regions.shape[0]):
 
 # Output the simulated data to a new bed file
 # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
-output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
+output_data_filename = os.path.join(OUT_DIR_DATA, "fp.bed")
 bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
 
-output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
+output_region_filename = os.path.join(OUT_DIR_REGIONS, "fp_regions.tsv")
 regions.to_csv(output_region_filename, sep="\t", index=False, header=True)

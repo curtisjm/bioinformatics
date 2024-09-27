@@ -1,13 +1,14 @@
 import os
+from typing import Generator
+
+import numpy as np
+import pandas as pd
+import ray
+from pandas import DataFrame
+from ray.util import ActorPool
 
 # os.environ["RAY_DEDUP_LOGS"] = "0"
 
-from ray.util import ActorPool
-from typing import Generator
-from pandas import DataFrame
-import ray
-import pandas as pd
-import numpy as np
 
 BED_FILE = "../../real-data/D23_Col0_all_CpG.bed"
 # BED_FILE = (

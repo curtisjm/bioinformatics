@@ -1,9 +1,12 @@
+import multiprocessing as mp
 import os
 
 import numpy as np
 import pandas as pd
 
-BED_FILE = "../../real-data/D23_Col0_all_CpG.bed"
+BED_FILE = (
+    "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/10k_test.bed"
+)
 # BED_FILE = (
 #     "/Users/curtis/Documents/bioinformatics/data-simulation/real-data/10k_test.bed"
 # )
@@ -26,7 +29,7 @@ CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 # Using a given proportion of methylation, simulate reads of each cytosine and
 # mutating the unmethylateted counts, methylated counts, and proportion of methylation
 # in the original data frame
-def simulate_reads(prop: float) -> tuple[int, int, float]:
+def simulate_reads(prop: float, rng) -> tuple[int, int, float]:
     uc_count = 0
     mc_count = 0
 
@@ -47,7 +50,7 @@ def simulate_reads(prop: float) -> tuple[int, int, float]:
 
 
 # For regions that are not DMRs, simulate the variation in reads
-def simulate_reads_for_region(start: int, end: int) -> float:
+def simulate_reads_for_region(start: int, end: int, bed_data, rng) -> float:
     new_pm = 0
 
     for row in range(start, end):
@@ -61,13 +64,13 @@ def simulate_reads_for_region(start: int, end: int) -> float:
     return new_pm / (end - start)
 
 
-def percent_diff(original_pm: float, start: int, end: int) -> float:
+def percent_diff(original_pm: float, start: int, end: int, bed_data) -> float:
     new_pm = bed_data.loc[start:end, "prop"].mean()
     return abs(new_pm - original_pm)
 
 
 def produce_dmr_iter_rand(
-    start: int, end: int, original_pm: float, inc_or_dec: str
+    start: int, end: int, original_pm: float, inc_or_dec: str, bed_data, rng
 ) -> None:
     min_percent_diff = PERCENT_DIFF_TO_BE_CALLED_AS_DMR
     max_percent_diff = 1 - original_pm / 100
@@ -105,7 +108,7 @@ def produce_dmr_iter_rand(
     return bed_data.loc[start:end, "prop"].mean()
 
 
-def modification_handler(region_num: int) -> None:
+def modification_handler(region_num: int, regions, bed_data, rng) -> tuple:
     start, end, original_pm, inc_or_dec = (
         regions.at[region_num, "start_row"],
         regions.at[region_num, "end_row"],
@@ -125,10 +128,11 @@ def modification_handler(region_num: int) -> None:
     print(f"\t New pm is {new_pm}")
     regions.at[region_num, "new_pm"] = new_pm
     regions.at[region_num, "percent_diff"] = abs(new_pm - original_pm)
+    return regions.iloc[region_num], bed_data.loc[start:end]
 
 
 # Divide the bed files into different regions
-def define_regions() -> pd.DataFrame:
+def define_regions(bed_data, rng) -> pd.DataFrame:
     num_dmrs = 0
     # pm stands for percent methylation
     cols = [
@@ -214,20 +218,53 @@ def define_regions() -> pd.DataFrame:
     return regions_df
 
 
-col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
-bed_data = pd.read_csv(BED_FILE, sep="\t", names=col_labels, header=None)
+def process_chunk(chunk, bed_data, rng):
+    results = []
+    for region_num in chunk:
+        modified_region, modified_bed_data = modification_handler(
+            region_num, regions, bed_data, rng
+        )
+        results.append((modified_region, modified_bed_data))
+    return results
 
-rng = np.random.default_rng()
 
-regions = define_regions()
+if __name__ == "__main__":
+    col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
+    bed_data = pd.read_csv(BED_FILE, sep="\t", names=col_labels, header=None)
 
-for region_num in range(regions.shape[0]):
-    modification_handler(region_num)
+    rng = np.random.default_rng()
+    regions = define_regions(bed_data, rng)
 
-# Output the simulated data to a new bed file
-# out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
-output_data_filename = os.path.join(OUT_DIR_DATA, "false_pos_test.bed")
-bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
+    # Split the regions into chunks for parallel processing
+    num_processes = mp.cpu_count()
+    chunk_size = len(regions) // num_processes
+    chunks = [
+        range(i, min(i + chunk_size, len(regions)))
+        for i in range(0, len(regions), chunk_size)
+    ]
 
-output_region_filename = os.path.join(OUT_DIR_REGIONS, "false_pos_test_regions.tsv")
-regions.to_csv(output_region_filename, sep="\t", index=False, header=True)
+    # Create a pool of workers
+    with mp.Pool(processes=num_processes) as pool:
+        results = pool.starmap(
+            process_chunk,
+            [(chunk, bed_data, np.random.default_rng()) for chunk in chunks],
+        )
+
+    # Combine the results
+    modified_regions = []
+    modified_bed_data = []
+    for chunk_result in results:
+        for region, bed_slice in chunk_result:
+            modified_regions.append(region)
+            modified_bed_data.append(bed_slice)
+
+    # Reconstruct the full DataFrames
+    regions = pd.concat(modified_regions, axis=0, ignore_index=True)
+    bed_data = pd.concat(modified_bed_data, axis=0)
+
+    # Output the simulated data to a new bed file
+    output_data_filename = os.path.join(OUT_DIR_DATA, "plex_t.bed")
+    bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
+
+    output_region_filename = os.path.join(OUT_DIR_REGIONS, "plex_t_regions.tsv")
+    regions.to_csv(output_region_filename, sep="\t", index=False, header=True)
