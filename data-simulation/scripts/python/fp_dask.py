@@ -203,31 +203,49 @@ def finalize_regions_info() -> None:
         )
 
 
-# TODO: Make child random number generators
+if __name__ == "__main__":
+    # from dask.distributed import Client
+    #
+    # client = Client()
 
+    # TODO: Make child random number generators
 
-col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
-bed_data = pd.read_csv(BED_FILE, sep="\t", names=col_labels, header=None)
+    col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
+    bed_data = pd.read_csv(BED_FILE, sep="\t", names=col_labels, header=None)
 
+    regions_info = define_regions()
 
-regions_info = define_regions()
+    global_rng = np.random.default_rng()
 
-global_rng = np.random.default_rng()
+    print(bed_data.iloc[5:15])
 
-print(bed_data.iloc[5:15])
+    # client.map()
 
-for _, region in regions_info.iterrows():
-    region_data = bed_data.iloc[region["start_row"] : region["end_row"] + 1]
-    region_data = get_simulated_region(region_data, region, global_rng)
-    bed_data.iloc[region["start_row"] : region["end_row"] + 1] = region_data
+    df = pd.concat(
+        list(
+            map(
+                lambda region: get_simulated_region(
+                    bed_data.iloc[region["start_row"] : region["end_row"] + 1],
+                    region,
+                    global_rng,
+                ),
+                [enum_region[1] for enum_region in regions_info.iterrows()],
+            )
+        )
+    )
 
-finalize_regions_info()
-print(regions_info)
+    # for _, region in regions_info.iterrows():
+    #     region_data = bed_data.iloc[region["start_row"] : region["end_row"] + 1]
+    #     region_data = get_simulated_region(region_data, region, global_rng)
+    #     bed_data.iloc[region["start_row"] : region["end_row"] + 1] = region_data
+    #
+    # finalize_regions_info()
+    print(df.iloc[5:15])
 
-# out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
+    # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
 
-output_data_filename = os.path.join(OUT_DIR_DATA, "fp.bed")
-bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
+    output_data_filename = os.path.join(OUT_DIR_DATA, "fp.bed")
+    bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
 
-output_region_filename = os.path.join(OUT_DIR_REGIONS, "fp_regions.tsv")
-regions_info.to_csv(output_region_filename, sep="\t", index=False, header=True)
+    output_region_filename = os.path.join(OUT_DIR_REGIONS, "fp_regions.tsv")
+    regions_info.to_csv(output_region_filename, sep="\t", index=False, header=True)
