@@ -5,7 +5,7 @@ import pandas as pd
 from numpy.random import Generator
 from pandas import DataFrame, Series
 
-BED_FILE = "../../real-data/10k_test.bed"
+BED_FILE = "../../real-data/10k_sorted.bed"
 OUT_DIR_DATA = "./"
 OUT_DIR_REGIONS = "./"
 DEPTH = 25
@@ -22,7 +22,7 @@ PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
 CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 
 
-def define_regions() -> DataFrame:
+def get_regions() -> DataFrame:
     rng = np.random.default_rng()
     num_dmrs = 0
     cols = [
@@ -139,18 +139,21 @@ def percent_diff(original_pm: float, start: int, end: int, region: DataFrame) ->
 
 
 def simulate_dmr(
-    start: int,
-    end: int,
-    original_pm: float,
-    inc_or_dec: str,
-    rng: Generator,
     region: DataFrame,
+    region_info: Series,
+    rng: Generator,
 ) -> DataFrame:
+    start = region_info.at["start_row"]
+    end = region_info.at["end_row"]
+    original_pm = region_info.at["original_pm"]
+    inc_or_dec = region_info.at["inc_or_dec"]
+
     max_percent_diff = 1 - original_pm / 100
     min_percent_diff = PERCENT_DIFF_TO_BE_CALLED_AS_DMR
     goal_percent_diff = 100 * (
         rng.random() * (max_percent_diff - min_percent_diff) + min_percent_diff
     )
+
     while percent_diff(original_pm, start, end, region) < goal_percent_diff:
         selected_cytosine = rng.integers(start, end, endpoint=True)
         inc_or_dec_multiplier = 1 if inc_or_dec == "+" else -1
@@ -158,6 +161,7 @@ def simulate_dmr(
         min_delta = 0
         max_delta = 100 - region.at[selected_cytosine, "prop"]
         delta = rng.random() * (max_delta - min_delta) + min_delta
+
         region.at[selected_cytosine, "prop"] += delta * inc_or_dec_multiplier
 
         # TODO: clean up variables here
@@ -178,20 +182,6 @@ def simulate_dmr(
     return region
 
 
-def get_simulated_region(
-    region: DataFrame, region_info: Series, rng: Generator
-) -> DataFrame:
-    start, end, original_pm, inc_or_dec = (
-        region_info.at["start_row"],
-        region_info.at["end_row"],
-        region_info.at["original_pm"],
-        region_info.at["inc_or_dec"],
-    )
-    if region_info.at["is_dmr"]:
-        return simulate_dmr(start, end, original_pm, inc_or_dec, rng, region)
-    return simulate_reads_for_region(start, end, rng, region)
-
-
 def finalize_regions_info() -> None:
     for _, region in regions_info.iterrows():
         new_pm = bed_data.loc[
@@ -204,27 +194,24 @@ def finalize_regions_info() -> None:
 
 
 if __name__ == "__main__":
-    # from dask.distributed import Client
-    #
-    # client = Client()
+    # from dask.distributed import Client, LocalCluster
+
+    # cluster = LocalCluster()
+    # client = Client(cluster)
 
     # TODO: Make child random number generators
 
     col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
     bed_data = pd.read_csv(BED_FILE, sep="\t", names=col_labels, header=None)
 
-    regions_info = define_regions()
+    regions_info = get_regions()
 
     global_rng = np.random.default_rng()
-
-    print(bed_data.iloc[5:15])
-
-    # client.map()
 
     df = pd.concat(
         list(
             map(
-                lambda region: get_simulated_region(
+                lambda region: simulate_dmr(
                     bed_data.iloc[region["start_row"] : region["end_row"] + 1],
                     region,
                     global_rng,
@@ -234,18 +221,67 @@ if __name__ == "__main__":
         )
     )
 
-    # for _, region in regions_info.iterrows():
-    #     region_data = bed_data.iloc[region["start_row"] : region["end_row"] + 1]
-    #     region_data = get_simulated_region(region_data, region, global_rng)
-    #     bed_data.iloc[region["start_row"] : region["end_row"] + 1] = region_data
-    #
+    output_data_filename = os.path.join(OUT_DIR_DATA, "new_fp.bed")
+    bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
+
+    output_region_filename = os.path.join(OUT_DIR_REGIONS, "new_fp_regions.tsv")
+    regions_info.to_csv(output_region_filename, sep="\t", index=False, header=True)
+
+    # x = client.submit(simulate_reads, 0.5, global_rng)
+    # print(x.result())
+
+    # futures = client.map(
+    #     lambda region: get_simulated_region(
+    #         bed_data.iloc[region["start_row"] : region["end_row"] + 1],
+    #         region,
+    #         global_rng,
+    #     ),
+    #     [enum_region[1] for enum_region in regions_info.iterrows()],
+    # )
+
+    # futures = []
+    # for enum_region in regions_info.iterrows():
+    #     futures.append(
+    #         client.submit(
+    #             get_simulated_region,
+    #             bed_data.iloc[
+    #                 enum_region[1]["start_row"] : enum_region[1]["end_row"] + 1
+    #             ],
+    #             enum_region[1],
+    #             global_rng,
+    #         )
+    #     )
+
+    # futures = client.map(
+    #     lambda region: region,
+    #     [enum_region[1] for enum_region in regions_info.iterrows()],
+    # )
+
+    # results = client.gather(futures)
+    # print(results)
+
+    # df = pd.concat(
+    #     list(
+    #         map(
+    #             lambda region: get_simulated_region(
+    #                 bed_data.iloc[region["start_row"] : region["end_row"] + 1],
+    #                 region,
+    #                 global_rng,
+    #             ),
+    #             [enum_region[1] for enum_region in regions_info.iterrows()],
+    #         )
+    #     )
+    # )
+
     # finalize_regions_info()
-    print(df.iloc[5:15])
+    # print(df.iloc[5:15])
 
     # out_file = os.path.join(OUT_DIR, f"{os.path.basename(BED_FILE).replace('.bed', '')}_sample_{i}_ray.bed")
 
-    output_data_filename = os.path.join(OUT_DIR_DATA, "fp.bed")
-    bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
+    # output_data_filename = os.path.join(OUT_DIR_DATA, "fp.bed")
+    # bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
+    #
+    # output_region_filename = os.path.join(OUT_DIR_REGIONS, "fp_regions.tsv")
+    # regions_info.to_csv(output_region_filename, sep="\t", index=False, header=True)
 
-    output_region_filename = os.path.join(OUT_DIR_REGIONS, "fp_regions.tsv")
-    regions_info.to_csv(output_region_filename, sep="\t", index=False, header=True)
+    # client.close()
