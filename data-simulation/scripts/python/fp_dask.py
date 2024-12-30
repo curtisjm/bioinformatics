@@ -154,12 +154,18 @@ def simulate_dmr(
         rng.random() * (max_percent_diff - min_percent_diff) + min_percent_diff
     )
 
+    iteration = 0
+
     while percent_diff(original_pm, start, end, region) < goal_percent_diff:
         selected_cytosine = rng.integers(start, end, endpoint=True)
         inc_or_dec_multiplier = 1 if inc_or_dec == "+" else -1
 
         min_delta = 0
-        max_delta = 100 - region.at[selected_cytosine, "prop"]
+        max_delta = (
+            100 - region.at[selected_cytosine, "prop"]
+            if inc_or_dec_multiplier == 1
+            else region.at[selected_cytosine, "prop"]
+        )
         delta = rng.random() * (max_delta - min_delta) + min_delta
 
         region.at[selected_cytosine, "prop"] += delta * inc_or_dec_multiplier
@@ -178,6 +184,11 @@ def simulate_dmr(
         region.at[selected_cytosine, "prop"] = (
             100 * region.at[selected_cytosine, "mc"] / total_num_reads
         )
+
+        # TODO: do this in a better way
+        iteration += 1
+        if iteration > MAX_REGION_SIZE * 10:
+            break
 
     return region
 
@@ -208,7 +219,7 @@ if __name__ == "__main__":
 
     global_rng = np.random.default_rng()
 
-    df = pd.concat(
+    bed_data = pd.concat(
         list(
             map(
                 lambda region: simulate_dmr(
@@ -220,6 +231,8 @@ if __name__ == "__main__":
             )
         )
     )
+
+    finalize_regions_info()
 
     output_data_filename = os.path.join(OUT_DIR_DATA, "new_fp.bed")
     bed_data.to_csv(output_data_filename, sep="\t", index=False, header=False)
