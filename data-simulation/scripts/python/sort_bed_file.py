@@ -30,5 +30,4 @@ def sort_single_file(file):
     )
 
 
-sort_single_file("../../real-data/D23_Col0_all_CpG.bed")
-
+sort_single_file("../../real-data/4-14_R0_all_CpG.bed")

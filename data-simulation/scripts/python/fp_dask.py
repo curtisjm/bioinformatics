@@ -21,6 +21,8 @@ MAX_REGION_SIZE = 100
 PERCENT_DIFF_TO_BE_CALLED_AS_DMR = 0.4
 CHANCE_OF_INCREASE_IN_METHYLATION = 0.9
 
+# different runs for read depth, region size, percent difference
+
 
 def get_regions() -> DataFrame:
     rng = np.random.default_rng()
@@ -99,38 +101,6 @@ def get_regions() -> DataFrame:
         )
         current_start = current_end + 1
     return regions_df
-
-
-def simulate_reads(prop: float, rng: Generator) -> tuple[int, int, float]:
-    uc_count = 0
-    mc_count = 0
-
-    num_reads = int(DEPTH + DEPTH * READ_VARIATION * (2 * rng.random() - 1))
-
-    # TODO: change this to normal distribution and find standard deviation
-    random_values = 100 * rng.random(num_reads)
-    mc_count = np.sum(random_values < prop, dtype=np.int32)
-    uc_count = num_reads - mc_count
-
-    sim_prop = 100 * mc_count / (mc_count + uc_count)
-
-    return (uc_count, mc_count, sim_prop)
-
-
-def simulate_reads_for_region(
-    start: int, end: int, rng: Generator, region: DataFrame
-) -> DataFrame:
-    new_pm = 0
-
-    for row in range(start, end):
-        uc_count, mc_count, sim_prop = simulate_reads(region.at[row, "prop"], rng)
-        region.at[row, "uc"] = uc_count
-        region.at[row, "mc"] = mc_count
-        region.at[row, "prop"] = sim_prop
-
-        new_pm += sim_prop
-
-    return region
 
 
 def percent_diff(original_pm: float, start: int, end: int, region: DataFrame) -> float:
