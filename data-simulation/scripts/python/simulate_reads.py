@@ -10,11 +10,10 @@ OUT_DIR = "./"
 DEPTH = 25
 READ_VARIATION = 0.15
 BATCH_SIZE = 100
+SIGMA = 0.15
 
 
 def simulate_reads_batch(props: list) -> list[Tuple[int, int, float]]:
-    """Process a batch of proportion values at once"""
-    np.random.seed()
     results = []
 
     for prop in props:
@@ -35,6 +34,7 @@ def simulate_reads_batch(props: list) -> list[Tuple[int, int, float]]:
 
 
 if __name__ == "__main__":
+    rng = np.random.default_rng()
     col_labels = ["chr", "start", "end", "uc", "mc", "prop"]
     bed_data = pd.read_csv(BED_FILE, sep="\t", names=col_labels, header=None)
 
